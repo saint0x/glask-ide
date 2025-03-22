@@ -1,0 +1,211 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+    --primary: 0 0% 98%;
+    --primary-foreground: 240 5.9% 10%;
+    --secondary: 240 3.7% 15.9%;
+    --secondary-foreground: 0 0% 98%;
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+    --radius: 0.5rem;
+
+    --sidebar-width: 16rem;
+    --sidebar-width-collapsed: 5rem;
+    --chat-sidebar-width: 18rem;
+    --terminal-height: 16rem;
+    --terminal-height-collapsed: 2.5rem;
+    --border-medium: rgba(192, 192, 200, 0.2);
+
+    /* Syntax highlighting colors */
+    --syntax-keyword: #ff79c6;
+    --syntax-string: #8be9fd;
+    --syntax-function: #50fa7b;
+    --syntax-comment: #6272a4;
+    --syntax-constant: #bd93f9;
+    --syntax-property: #ffb86c;
+    --syntax-punctuation: #a0a0a8;
+    --syntax-variable: #f8f8f2;
+  }
+
+  /* Global scrollbar hiding for all elements */
+  * {
+    scrollbar-width: none; /* Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+  }
+
+  /* Hide scrollbar for Chrome, Safari and Opera */
+  *::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+@layer components {
+  .glassmorphic {
+    @apply border border-border backdrop-blur-md;
+    background: rgba(26, 26, 32, 0.6);
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .glassmorphic-light {
+    @apply border border-border backdrop-blur-md;
+    background: rgba(26, 26, 32, 0.3);
+    box-shadow: 0 4px 16px 0 rgba(0, 0, 0, 0.1);
+    -webkit-backdrop-filter: blur(10px);
+  }
+
+  .glassmorphic-input {
+    height: 40px;
+    padding: 0 16px;
+    border: 1px solid rgba(192, 192, 200, 0.2);
+    background: rgba(192, 192, 200, 0.05);
+    color: #e8e8ed;
+    border-radius: 6px;
+  }
+
+  /* Tab styling */
+  .tab-active {
+    @apply bg-[rgba(40,40,46,0.6)] text-[#e8e8ed];
+    border-top: 2px solid #4d9cf6;
+  }
+
+  /* Chat input styling */
+  .chat-input-container {
+    @apply relative rounded-xl border border-[#c0c0c8]/10 bg-[#c0c0c8]/5;
+  }
+
+  .chat-input {
+    @apply min-h-8 w-full resize-none border-0 bg-transparent py-2 px-3 text-sm text-[#e8e8ed] placeholder-[#a0a0a8] focus:outline-none focus:ring-0;
+  }
+
+  .context-file-tag {
+    @apply flex items-center gap-1 rounded-md bg-[#c0c0c8]/10 px-2 py-1 text-xs text-[#e8e8ed];
+  }
+
+  .language-tag {
+    @apply rounded bg-[#c0c0c8]/20 px-1 text-[10px] font-medium text-[#a0a0a8];
+  }
+
+  /* Floating elements */
+  .floating-element {
+    @apply shadow-lg;
+    box-shadow: 0 8px 32px 0 rgba(0, 0, 0, 0.2);
+  }
+
+  /* Resize handles */
+  .resize-handle {
+    @apply absolute z-30 w-1 cursor-ew-resize hover:bg-[#4d9cf6]/30 transition-colors duration-150;
+  }
+
+  /* Responsive chat bar */
+  .chat-bar-controls {
+    @apply flex flex-wrap items-center justify-between gap-y-2 text-xs;
+  }
+
+  .chat-bar-button {
+    @apply flex h-7 items-center gap-1 rounded-lg border border-[#c0c0c8]/10 bg-[#c0c0c8]/5 px-2 text-xs text-[#e8e8ed] hover:bg-[#c0c0c8]/10 flex-shrink-0;
+  }
+
+  .chat-bar-icon-button {
+    @apply h-6 w-6 rounded-md text-[#a0a0a8] hover:bg-[#c0c0c8]/10 hover:text-[#e8e8ed] flex-shrink-0;
+  }
+
+  .model-name {
+    @apply truncate;
+    max-width: 120px;
+  }
+
+  /* Chat message styling */
+  .message-container {
+    @apply relative;
+    margin-bottom: 1.5rem;
+  }
+
+  .message-container:last-child {
+    margin-bottom: 0;
+  }
+
+  /* Code editor styling */
+  .editor-line-number {
+    @apply text-[#6272a4] opacity-60 select-none mr-4 text-right w-8;
+    user-select: none;
+  }
+
+  .editor-keyword {
+    color: var(--syntax-keyword);
+  }
+
+  .editor-string {
+    color: var(--syntax-string);
+  }
+
+  .editor-function {
+    color: var(--syntax-function);
+  }
+
+  .editor-comment {
+    color: var(--syntax-comment);
+    font-style: italic;
+  }
+
+  .editor-constant {
+    color: var(--syntax-constant);
+  }
+
+  .editor-property {
+    color: var(--syntax-property);
+  }
+
+  .editor-punctuation {
+    color: var(--syntax-punctuation);
+  }
+
+  .editor-variable {
+    color: var(--syntax-variable);
+  }
+}
+
+/* Code block styling in AI messages */
+.message-container pre {
+  margin-top: 0.5rem;
+  margin-bottom: 0.5rem;
+  padding: 0.75rem;
+  border-radius: 0.375rem;
+  background-color: #1a1a20;
+  overflow-x: auto;
+  border: 1px solid rgba(192, 192, 200, 0.1);
+}
+
+.message-container code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+  font-size: 0.75rem;
+}
+
+@media (min-width: 400px) {
+  .model-name {
+    max-width: none;
+  }
+}
+
+@layer utilities {
+  .bg-gradient-custom {
+    background: linear-gradient(to bottom right, #1a1a20, #1e1e24, #141418);
+  }
+}
+

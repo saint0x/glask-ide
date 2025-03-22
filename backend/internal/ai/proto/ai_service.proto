@@ -1,0 +1,75 @@
+syntax = "proto3";
+
+package ai;
+option go_package = "glask-ide/internal/ai/proto";
+
+service AIService {
+  // Complete handles single completion requests
+  rpc Complete(CompletionRequest) returns (CompletionResponse) {}
+  
+  // StreamComplete handles streaming completion requests
+  rpc StreamComplete(CompletionRequest) returns (stream CompletionChunk) {}
+  
+  // GetModels returns available AI models
+  rpc GetModels(GetModelsRequest) returns (GetModelsResponse) {}
+  
+  // SetActiveModel changes the current model
+  rpc SetActiveModel(SetActiveModelRequest) returns (SetActiveModelResponse) {}
+}
+
+message CompletionRequest {
+  string prompt = 1;
+  optional int32 max_tokens = 2;
+  optional float temperature = 3;
+  optional bool stream = 4;
+  repeated string stop_sequences = 5;
+  optional float top_p = 6;
+  optional int32 top_k = 7;
+}
+
+message CompletionResponse {
+  string id = 1;
+  string status = 2;
+  string output = 3;
+  optional string error = 4;
+  CompletionMetrics metrics = 5;
+}
+
+message CompletionMetrics {
+  int32 total_tokens = 1;
+  int32 prompt_tokens = 2;
+  int32 completion_tokens = 3;
+  int64 total_time_ms = 4;
+}
+
+message CompletionChunk {
+  string type = 1;
+  string content = 2;
+  int64 timestamp = 3;
+}
+
+message GetModelsRequest {}
+
+message GetModelsResponse {
+  repeated ModelInfo models = 1;
+  ModelInfo active_model = 2;
+}
+
+message ModelInfo {
+  string id = 1;
+  string name = 2;
+  string provider = 3;
+  int32 max_tokens = 4;
+  repeated string capabilities = 5;
+  string description = 6;
+}
+
+message SetActiveModelRequest {
+  string model_id = 1;
+}
+
+message SetActiveModelResponse {
+  bool success = 1;
+  optional string error = 2;
+  ModelInfo active_model = 3;
+} 

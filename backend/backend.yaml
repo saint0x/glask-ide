@@ -1,0 +1,834 @@
+# Glassmorphic IDE Backend Technical Specification
+version: 1.0.0
+last_updated: "2025-03-22"
+
+architecture:
+  overview: |
+    The backend system for the Glassmorphic IDE is built in Go and consists of 
+    several core services that handle AI code assistance, file system operations, 
+    terminal emulation, and real-time collaboration. The system uses WebSockets 
+    for real-time communication and RESTful APIs for standard operations. All data 
+    is stored in a local SQLite database.
+
+  components:
+    - name: api-server
+      description: |
+        Main Go server that handles all API requests and WebSocket connections.
+      technologies:
+        - Go
+        - Gin/Echo/Fiber (HTTP framework)
+        - Gorilla WebSocket
+      
+    - name: ai-service
+      description: |
+        Core AI functionality for code completion, refactoring, and assistance.
+      technologies:
+        - Go
+        - Gemini Flash 2.0 API
+        - Claude Haiku 3.5 API
+      
+    - name: file-system-service
+      description: |
+        Manages file operations, project structure, and code indexing.
+      technologies:
+        - Go
+        - Native filesystem APIs
+        - SQLite (for metadata)
+      
+    - name: terminal-service
+      description: |
+        Provides terminal emulation and command execution capabilities.
+      technologies:
+        - Go
+        - pty package
+        - WebSockets
+      
+    - name: collaboration-service
+      description: |
+        Enables real-time collaboration features like shared editing.
+      technologies:
+        - Go
+        - WebSockets
+        - CRDT (Conflict-free Replicated Data Type)
+
+ai_service:
+  capabilities:
+    - code_completion:
+        description: |
+          Provides context-aware code completion suggestions as the user types.
+        implementation:
+          models:
+            - name: "gemini-flash-2.0"
+              primary_use: "Fast completions and suggestions"
+              context_window: 32000
+              temperature: 0.2
+              max_tokens: 1024
+              streaming: true
+            - name: "claude-haiku-3.5"
+              primary_use: "Detailed explanations and complex reasoning"
+              context_window: 48000
+              temperature: 0.3
+              max_tokens: 2048
+              streaming: true
+        performance:
+          latency_target: "<150ms for initial suggestions"
+          throughput: "20 requests/second"
+    
+    - code_generation:
+        description: |
+          Generates code snippets or entire files based on natural language descriptions.
+        implementation:
+          model: "claude-haiku-3.5"
+          context_window: 48000
+          temperature: 0.7
+          max_tokens: 4096
+          streaming: true
+        performance:
+          latency_target: "<2s for complete generation"
+    
+    - code_refactoring:
+        description: |
+          Analyzes and refactors existing code to improve quality, readability, or performance.
+        implementation:
+          model: "gemini-flash-2.0"
+          context_window: 32000
+          temperature: 0.1
+          max_tokens: 4096
+        performance:
+          latency_target: "<3s for small refactorings"
+    
+    - error_analysis:
+        description: |
+          Identifies and explains errors in code, suggesting potential fixes.
+        implementation:
+          model: "claude-haiku-3.5"
+          context_window: 48000
+          temperature: 0.1
+          max_tokens: 2048
+        performance:
+          latency_target: "<2s for error analysis"
+    
+    - documentation_generation:
+        description: |
+          Generates documentation for code, including JSDoc, TypeDoc, or markdown.
+        implementation:
+          model: "gemini-flash-2.0"
+          context_window: 32000
+          temperature: 0.3
+          max_tokens: 4096
+        performance:
+          latency_target: "<3s for function documentation"
+  
+  context_management:
+    file_context:
+      description: |
+        Manages the context of the current file and surrounding project structure.
+      implementation:
+        max_files: 50
+        max_file_size: "1MB"
+        prioritization: "current file, imported files, project structure"
+    
+    conversation_history:
+      description: |
+        Maintains conversation history for contextual understanding.
+      implementation:
+        max_messages: 20
+        max_tokens: 32000
+        storage: "SQLite with conversation_history table"
+        schema: |
+          CREATE TABLE conversation_history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            conversation_id TEXT NOT NULL,
+            message_index INTEGER NOT NULL,
+            role TEXT NOT NULL,
+            content TEXT NOT NULL,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            token_count INTEGER,
+            metadata TEXT
+          );
+    
+    memory_storage:
+      description: |
+        Stores AI memory and context for long-term recall.
+      implementation:
+        storage: "SQLite with ai_memory table"
+        schema: |
+          CREATE TABLE ai_memory (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            memory_key TEXT NOT NULL,
+            memory_type TEXT NOT NULL,
+            content TEXT NOT NULL,
+            embedding BLOB,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            last_accessed DATETIME,
+            access_count INTEGER DEFAULT 0,
+            metadata TEXT
+          );
+          
+          CREATE INDEX idx_memory_key ON ai_memory(memory_key);
+          CREATE INDEX idx_memory_type ON ai_memory(memory_type);
+        memory_types:
+          - "user_preferences"
+          - "code_patterns"
+          - "project_context"
+          - "frequent_commands"
+    
+    code_indexing:
+      description: |
+        Indexes code for semantic understanding and quick retrieval.
+      implementation:
+        indexing_frequency: "On file save or every 5 minutes"
+        technologies:
+          - "Tree-sitter for parsing"
+          - "Simple vector embeddings stored in SQLite"
+          - "SQLite FTS5 extension for text search"
+  
+  api_endpoints:
+    - path: "/api/ai/complete"
+      method: "POST"
+      description: "Provides code completion suggestions"
+      request:
+        content_type: "application/json"
+        schema:
+          file_path: "string"
+          cursor_position: "number"
+          prefix: "string"
+          suffix: "string"
+          project_context: "object"
+          model: "string (optional, defaults to gemini-flash-2.0)"
+      response:
+        content_type: "application/json"
+        schema:
+          suggestions: "array of completion objects"
+          latency: "number (ms)"
+    
+    - path: "/api/ai/generate"
+      method: "POST"
+      description: "Generates code from natural language"
+      request:
+        content_type: "application/json"
+        schema:
+          prompt: "string"
+          file_path: "string (optional)"
+          language: "string"
+          project_context: "object"
+          model: "string (optional, defaults to claude-haiku-3.5)"
+      response:
+        content_type: "application/json"
+        schema:
+          code: "string"
+          explanation: "string"
+    
+    - path: "/api/ai/refactor"
+      method: "POST"
+      description: "Refactors existing code"
+      request:
+        content_type: "application/json"
+        schema:
+          file_path: "string"
+          selection: "object (start and end positions)"
+          instruction: "string"
+          project_context: "object"
+          model: "string (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          refactored_code: "string"
+          diff: "string (unified diff format)"
+          explanation: "string"
+    
+    - path: "/api/ai/analyze"
+      method: "POST"
+      description: "Analyzes code for errors or improvements"
+      request:
+        content_type: "application/json"
+        schema:
+          file_path: "string"
+          code: "string"
+          project_context: "object"
+          model: "string (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          issues: "array of issue objects"
+          suggestions: "array of suggestion objects"
+    
+    - path: "/api/ai/chat"
+      method: "POST"
+      description: "Handles conversational AI interactions"
+      request:
+        content_type: "application/json"
+        schema:
+          message: "string"
+          conversation_id: "string"
+          file_context: "array of file objects"
+          model: "string (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          response: "string"
+          actions: "array of suggested actions"
+    
+    - path: "/api/ai/stream"
+      method: "WebSocket"
+      description: "Streams AI responses for real-time feedback"
+      protocol: "WebSocket with JSON messages"
+      message_types:
+        - type: "completion_chunk"
+          schema:
+            id: "string"
+            content: "string"
+            is_final: "boolean"
+        - type: "error"
+          schema:
+            code: "string"
+            message: "string"
+    
+    - path: "/api/ai/memory"
+      method: "POST"
+      description: "Stores information in AI memory"
+      request:
+        content_type: "application/json"
+        schema:
+          memory_key: "string"
+          memory_type: "string"
+          content: "string"
+          metadata: "object (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          id: "number"
+          success: "boolean"
+    
+    - path: "/api/ai/memory"
+      method: "GET"
+      description: "Retrieves information from AI memory"
+      request:
+        query_parameters:
+          memory_key: "string (optional)"
+          memory_type: "string (optional)"
+          query: "string (optional, for semantic search)"
+      response:
+        content_type: "application/json"
+        schema:
+          memories: "array of memory objects"
+
+terminal_service:
+  capabilities:
+    - terminal_emulation:
+        description: |
+          Provides a full terminal emulation experience with support for 
+          ANSI escape sequences, interactive programs, and command history.
+        implementation:
+          technology: "Go pty package"
+          shell: "system default (bash, zsh, powershell, cmd)"
+          features:
+            - "Full ANSI color support"
+            - "Interactive program support (vim, nano, etc.)"
+            - "Command history and search"
+            - "Tab completion"
+    
+    - command_execution:
+        description: |
+          Executes commands in the local environment.
+        implementation:
+          execution: "Direct execution in local shell"
+          working_directory: "Project root or specified directory"
+          environment_variables: "Configurable per project"
+    
+    - session_management:
+        description: |
+          Manages terminal sessions, allowing reconnection and persistence.
+        implementation:
+          session_persistence: "SQLite with terminal_sessions table"
+          reconnection: "Automatic session restoration"
+          max_sessions: "5 per project"
+          schema: |
+            CREATE TABLE terminal_sessions (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              session_id TEXT NOT NULL UNIQUE,
+              project_id TEXT NOT NULL,
+              working_directory TEXT NOT NULL,
+              shell_type TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              last_active DATETIME,
+              command_history TEXT,
+              environment_vars TEXT
+            );
+    
+    - terminal_multiplexing:
+        description: |
+          Supports multiple terminal instances within a single project.
+        implementation:
+          max_terminals: "10 per project"
+          naming: "User-defined or auto-generated"
+  
+  command_history:
+    description: |
+      Tracks and stores command history for easy recall and analysis.
+    implementation:
+      storage: "SQLite with terminal_commands table"
+      schema: |
+        CREATE TABLE terminal_commands (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          session_id TEXT NOT NULL,
+          command TEXT NOT NULL,
+          executed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          exit_code INTEGER,
+          duration_ms INTEGER
+        );
+        
+        CREATE INDEX idx_session_id ON terminal_commands(session_id);
+      features:
+        - "Command frequency analysis"
+        - "Suggestion of common commands"
+        - "Project-specific command history"
+  
+  api_endpoints:
+    - path: "/api/terminal/create"
+      method: "POST"
+      description: "Creates a new terminal session"
+      request:
+        content_type: "application/json"
+        schema:
+          project_id: "string"
+          shell_type: "string (optional)"
+          working_directory: "string (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          session_id: "string"
+          connection_url: "string (WebSocket URL)"
+    
+    - path: "/api/terminal/resize"
+      method: "POST"
+      description: "Resizes the terminal dimensions"
+      request:
+        content_type: "application/json"
+        schema:
+          session_id: "string"
+          cols: "number"
+          rows: "number"
+      response:
+        content_type: "application/json"
+        schema:
+          success: "boolean"
+    
+    - path: "/api/terminal/terminate"
+      method: "POST"
+      description: "Terminates a terminal session"
+      request:
+        content_type: "application/json"
+        schema:
+          session_id: "string"
+      response:
+        content_type: "application/json"
+        schema:
+          success: "boolean"
+    
+    - path: "/api/terminal/list"
+      method: "GET"
+      description: "Lists all terminal sessions for a project"
+      request:
+        query_parameters:
+          project_id: "string"
+      response:
+        content_type: "application/json"
+        schema:
+          sessions: "array of session objects"
+    
+    - path: "/api/terminal/connect"
+      method: "WebSocket"
+      description: "Connects to an existing terminal session"
+      protocol: "WebSocket with binary data for terminal I/O"
+      message_types:
+        - type: "input"
+          encoding: "UTF-8 encoded terminal input"
+        - type: "output"
+          encoding: "UTF-8 encoded terminal output with ANSI sequences"
+        - type: "control"
+          schema:
+            action: "string (resize, interrupt, etc.)"
+            parameters: "object"
+
+file_system_service:
+  capabilities:
+    - file_operations:
+        description: |
+          Provides CRUD operations for files and directories using native filesystem.
+        implementation:
+          storage: "Local filesystem"
+          metadata: "SQLite for file metadata and indexing"
+          operations:
+            - "Create file/directory"
+            - "Read file content"
+            - "Update file content"
+            - "Delete file/directory"
+            - "Rename file/directory"
+            - "Move file/directory"
+            - "Copy file/directory"
+    
+    - project_management:
+        description: |
+          Manages project structure, settings, and metadata.
+        implementation:
+          project_structure: "SQLite table with project metadata"
+          settings_storage: "JSON files in project root"
+          schema: |
+            CREATE TABLE projects (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_id TEXT NOT NULL UNIQUE,
+              name TEXT NOT NULL,
+              root_path TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              last_opened DATETIME,
+              settings TEXT,
+              metadata TEXT
+            );
+    
+    - code_indexing:
+        description: |
+          Indexes code for search, navigation, and AI context.
+        implementation:
+          indexing_technology: "Tree-sitter for parsing"
+          search_engine: "SQLite FTS5 for full-text search"
+          symbol_extraction: "Language-specific parsers"
+          update_strategy: "Incremental updates on file changes"
+          schema: |
+            CREATE VIRTUAL TABLE file_index USING fts5(
+              path, 
+              content, 
+              language,
+              tokenize='porter unicode61'
+            );
+            
+            CREATE TABLE symbols (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              file_path TEXT NOT NULL,
+              symbol_name TEXT NOT NULL,
+              symbol_type TEXT NOT NULL,
+              line_number INTEGER,
+              column_number INTEGER,
+              scope TEXT,
+              signature TEXT,
+              last_updated DATETIME DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE INDEX idx_file_path ON symbols(file_path);
+            CREATE INDEX idx_symbol_name ON symbols(symbol_name);
+    
+    - file_history:
+        description: |
+          Tracks file changes for undo/redo and history browsing.
+        implementation:
+          storage: "SQLite with file_history table"
+          retention: "100 changes per file"
+          schema: |
+            CREATE TABLE file_history (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              file_path TEXT NOT NULL,
+              content BLOB NOT NULL,
+              change_type TEXT NOT NULL,
+              timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+              metadata TEXT
+            );
+            
+            CREATE INDEX idx_file_history_path ON file_history(file_path);
+  
+  api_endpoints:
+    - path: "/api/fs/file"
+      method: "GET"
+      description: "Retrieves file content"
+      request:
+        query_parameters:
+          path: "string (file path)"
+          project_id: "string"
+          version: "string (optional, for versioned files)"
+      response:
+        content_type: "application/octet-stream or text/*"
+        schema:
+          content: "file content"
+          metadata: "object (in headers)"
+    
+    - path: "/api/fs/file"
+      method: "PUT"
+      description: "Creates or updates a file"
+      request:
+        content_type: "multipart/form-data or application/octet-stream"
+        schema:
+          path: "string (file path)"
+          project_id: "string"
+          content: "file content"
+          encoding: "string (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          success: "boolean"
+          file_info: "object"
+    
+    - path: "/api/fs/file"
+      method: "DELETE"
+      description: "Deletes a file"
+      request:
+        query_parameters:
+          path: "string (file path)"
+          project_id: "string"
+      response:
+        content_type: "application/json"
+        schema:
+          success: "boolean"
+    
+    - path: "/api/fs/directory"
+      method: "GET"
+      description: "Lists directory contents"
+      request:
+        query_parameters:
+          path: "string (directory path)"
+          project_id: "string"
+          recursive: "boolean (optional)"
+          include_hidden: "boolean (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          items: "array of file and directory objects"
+    
+    - path: "/api/fs/directory"
+      method: "POST"
+      description: "Creates a directory"
+      request:
+        content_type: "application/json"
+        schema:
+          path: "string (directory path)"
+          project_id: "string"
+      response:
+        content_type: "application/json"
+        schema:
+          success: "boolean"
+          directory_info: "object"
+    
+    - path: "/api/fs/search"
+      method: "GET"
+      description: "Searches for files or content"
+      request:
+        query_parameters:
+          project_id: "string"
+          query: "string"
+          type: "string (file, content, symbol)"
+          max_results: "number (optional)"
+      response:
+        content_type: "application/json"
+        schema:
+          results: "array of search result objects"
+          total_count: "number"
+    
+    - path: "/api/fs/watch"
+      method: "WebSocket"
+      description: "Watches for file system changes"
+      protocol: "WebSocket with JSON messages"
+      message_types:
+        - type: "file_created"
+          schema:
+            path: "string"
+            type: "file or directory"
+            metadata: "object"
+        - type: "file_updated"
+          schema:
+            path: "string"
+            diff: "object (optional)"
+        - type: "file_deleted"
+          schema:
+            path: "string"
+        - type: "file_moved"
+          schema:
+            old_path: "string"
+            new_path: "string"
+
+collaboration_service:
+  capabilities:
+    - real_time_editing:
+        description: |
+          Enables multiple users to edit the same file simultaneously.
+        implementation:
+          technology: "Operational Transformation or CRDT"
+          conflict_resolution: "Automatic with user notification"
+          cursor_tracking: "Real-time cursor position sharing"
+    
+    - presence_awareness:
+        description: |
+          Shows which users are online and what files they're editing.
+        implementation:
+          heartbeat: "WebSocket ping every 30 seconds"
+          status_updates: "Real-time activity broadcasting"
+    
+    - commenting:
+        description: |
+          Allows users to add comments to code without modifying it.
+        implementation:
+          storage: "SQLite with comments table"
+          threading: "Support for nested comment threads"
+          schema: |
+            CREATE TABLE comments (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              file_path TEXT NOT NULL,
+              line_start INTEGER NOT NULL,
+              line_end INTEGER NOT NULL,
+              column_start INTEGER,
+              column_end INTEGER,
+              content TEXT NOT NULL,
+              author TEXT NOT NULL,
+              created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+              parent_id INTEGER,
+              resolved BOOLEAN DEFAULT 0,
+              FOREIGN KEY (parent_id) REFERENCES comments(id)
+            );
+            
+            CREATE INDEX idx_comments_file ON comments(file_path);
+  
+  api_endpoints:
+    - path: "/api/collab/join"
+      method: "POST"
+      description: "Joins a collaborative editing session"
+      request:
+        content_type: "application/json"
+        schema:
+          file_path: "string"
+          project_id: "string"
+          user_info: "object"
+      response:
+        content_type: "application/json"
+        schema:
+          session_id: "string"
+          connection_url: "string (WebSocket URL)"
+          current_content: "string"
+          version: "number"
+    
+    - path: "/api/collab/edit"
+      method: "WebSocket"
+      description: "Streams edits in real-time"
+      protocol: "WebSocket with JSON messages"
+      message_types:
+        - type: "operation"
+          schema:
+            session_id: "string"
+            operations: "array of operation objects"
+            version: "number"
+        - type: "cursor"
+          schema:
+            session_id: "string"
+            position: "object (line and column)"
+        - type: "presence"
+          schema:
+            user_id: "string"
+            status: "string"
+            file_path: "string (optional)"
+    
+    - path: "/api/collab/comment"
+      method: "POST"
+      description: "Adds a comment to code"
+      request:
+        content_type: "application/json"
+        schema:
+          file_path: "string"
+          project_id: "string"
+          position: "object (line and column range)"
+          content: "string"
+          parent_id: "string (optional, for replies)"
+      response:
+        content_type: "application/json"
+        schema:
+          comment_id: "string"
+          created_at: "timestamp"
+    
+    - path: "/api/collab/comments"
+      method: "GET"
+      description: "Gets comments for a file"
+      request:
+        query_parameters:
+          file_path: "string"
+          project_id: "string"
+      response:
+        content_type: "application/json"
+        schema:
+          comments: "array of comment objects"
+
+database:
+  implementation:
+    type: "SQLite"
+    file_path: "~/.glassmorphic-ide/data.db"
+    backup:
+      frequency: "Daily"
+      location: "~/.glassmorphic-ide/backups/"
+      retention: "7 days"
+  
+  performance:
+    optimizations:
+      - "WAL journal mode for better concurrency"
+      - "Appropriate indexes on frequently queried columns"
+      - "Prepared statements for repeated queries"
+      - "Transaction batching for bulk operations"
+  
+  migrations:
+    strategy: "Embedded migration scripts"
+    versioning: "Schema version table to track applied migrations"
+    schema: |
+      CREATE TABLE schema_migrations (
+        version INTEGER PRIMARY KEY,
+        applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+local_deployment:
+  requirements:
+    - "Go 1.21+ installed"
+    - "SQLite 3.35.0+ installed"
+    - "API keys for Gemini Flash 2.0 and Claude Haiku 3.5"
+  
+  configuration:
+    file_path: "~/.glassmorphic-ide/config.json"
+    environment_variables:
+      - "GEMINI_API_KEY"
+      - "CLAUDE_API_KEY"
+      - "IDE_PORT=8080"
+      - "IDE_DATA_DIR=~/.glassmorphic-ide"
+  
+  startup:
+    command: "glassmorphic-ide serve"
+    options:
+      - "--port 8080"
+      - "--data-dir ~/.glassmorphic-ide"
+      - "--log-level info"
+  
+  logging:
+    level: "info (configurable)"
+    format: "JSON or text"
+    location: "~/.glassmorphic-ide/logs/"
+    rotation: "Daily with 7-day retention"
+
+performance_optimization:
+  caching_strategy:
+    levels:
+      - name: "In-memory caching"
+        implementation:
+          technology: "Go sync.Map or similar"
+          scope: "Frequently accessed files, search results"
+          eviction: "LRU with configurable size limit"
+      
+      - name: "SQLite caching"
+        implementation:
+          technology: "SQLite page cache"
+          configuration: "Increased cache size for better performance"
+          scope: "Database queries and indexed content"
+  
+  request_optimization:
+    batching:
+      description: |
+        Combines multiple requests into single operations.
+      implementation:
+        file_operations: "Batch file reads/writes"
+        database_queries: "Bulk operations for related data"
+    
+    compression:
+      description: |
+        Reduces data transfer size.
+      implementation:
+        http_compression: "gzip for HTTP responses"
+        binary_protocols: "Efficient binary encoding for WebSockets"

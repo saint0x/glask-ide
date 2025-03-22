@@ -1,0 +1,126 @@
+syntax = "proto3";
+
+package filesystem;
+option go_package = "glask-ide/internal/filesystem/proto";
+
+service FileSystemService {
+  // List directory contents
+  rpc ListDirectory(ListDirectoryRequest) returns (ListDirectoryResponse) {}
+  
+  // Watch directory for changes
+  rpc WatchDirectory(WatchDirectoryRequest) returns (stream FileEvent) {}
+  
+  // Basic file operations
+  rpc ReadFile(ReadFileRequest) returns (ReadFileResponse) {}
+  rpc WriteFile(WriteFileRequest) returns (WriteFileResponse) {}
+  rpc DeleteFile(DeleteFileRequest) returns (DeleteFileResponse) {}
+  rpc MoveFile(MoveFileRequest) returns (MoveFileResponse) {}
+  
+  // Directory operations
+  rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse) {}
+  rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse) {}
+  
+  // Search operations
+  rpc SearchFiles(SearchRequest) returns (SearchResponse) {}
+}
+
+message ListDirectoryRequest {
+  string path = 1;
+  bool recursive = 2;
+  bool include_hidden = 3;
+}
+
+message ListDirectoryResponse {
+  repeated FileInfo items = 1;
+}
+
+message FileInfo {
+  string path = 1;
+  string name = 2;
+  int64 size = 3;
+  string mode = 4;
+  int64 mod_time = 5;
+  bool is_dir = 6;
+}
+
+message WatchDirectoryRequest {
+  string path = 1;
+  bool recursive = 2;
+}
+
+message FileEvent {
+  enum Type {
+    UNKNOWN = 0;
+    CREATED = 1;
+    MODIFIED = 2;
+    DELETED = 3;
+    RENAMED = 4;
+  }
+  
+  Type type = 1;
+  string path = 2;
+  FileInfo file_info = 3;
+  string old_path = 4; // For rename events
+}
+
+message ReadFileRequest {
+  string path = 1;
+}
+
+message ReadFileResponse {
+  bytes content = 1;
+}
+
+message WriteFileRequest {
+  string path = 1;
+  bytes content = 2;
+}
+
+message WriteFileResponse {
+  bool success = 1;
+}
+
+message DeleteFileRequest {
+  string path = 1;
+}
+
+message DeleteFileResponse {
+  bool success = 1;
+}
+
+message MoveFileRequest {
+  string old_path = 1;
+  string new_path = 2;
+}
+
+message MoveFileResponse {
+  bool success = 1;
+}
+
+message CreateDirectoryRequest {
+  string path = 1;
+}
+
+message CreateDirectoryResponse {
+  bool success = 1;
+}
+
+message DeleteDirectoryRequest {
+  string path = 1;
+}
+
+message DeleteDirectoryResponse {
+  bool success = 1;
+}
+
+message SearchRequest {
+  string query = 1;
+  repeated string file_patterns = 2;
+  int32 max_results = 3;
+  string root_path = 4;
+}
+
+message SearchResponse {
+  repeated FileInfo results = 1;
+  int32 total_count = 2;
+} 

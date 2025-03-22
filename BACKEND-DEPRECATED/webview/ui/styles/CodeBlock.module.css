@@ -1,0 +1,91 @@
+.code-block {
+  position: relative;
+  background-color: var(--vscode-textBlockQuote-background);
+  border-radius: 6px;
+  padding: 1rem;
+  margin: 0.5rem 0;
+  overflow-x: auto;
+}
+
+.code-block-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.5rem 0.75rem;
+  background-color: var(--vscode-editor-lineHighlightBackground);
+  border-bottom: 1px solid var(--vscode-input-border);
+  font-size: 12px;
+}
+
+.code-block-path {
+  color: var(--vscode-descriptionForeground);
+  font-family: var(--vscode-editor-font-family);
+}
+
+.code-block-copy {
+  padding: 2px 8px;
+  border-radius: 3px;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-button-border);
+  cursor: pointer;
+  font-size: 11px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  transition: background-color 0.2s;
+}
+
+.code-block-copy:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.code-block pre {
+  margin: 0;
+  font-family: var(--vscode-editor-font-family);
+  font-size: var(--vscode-editor-font-size);
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.code-block code {
+  font-family: inherit;
+}
+
+/* Language-specific syntax highlighting classes will be handled by VS Code's theme */
+.code-block .language-typescript,
+.code-block .language-javascript,
+.code-block .language-json,
+.code-block .language-html,
+.code-block .language-css {
+  color: var(--vscode-editor-foreground);
+}
+
+.copy-button {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  background-color: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border: 1px solid var(--vscode-button-border);
+  border-radius: 4px;
+  font-size: 11px;
+  cursor: pointer;
+  opacity: 0;
+  transition: opacity 0.2s ease, background-color 0.2s ease;
+}
+
+.code-block:hover .copy-button {
+  opacity: 1;
+}
+
+.copy-button:hover {
+  background-color: var(--vscode-button-secondaryHoverBackground);
+}
+
+.copy-button.copied {
+  background-color: var(--vscode-statusBarItem-remoteBackground);
+  color: var(--vscode-statusBarItem-remoteForeground);
+  border-color: transparent;
+} 
