@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/gorilla/websocket"
 )
 
@@ -16,12 +15,13 @@ const (
 	ErrConnectionFailed = "CONNECTION_FAILED"
 	ErrTerminalClosed   = "TERMINAL_CLOSED"
 	ErrInvalidOperation = "INVALID_OPERATION"
+	ErrMissingSessionId = "MISSING_SESSION_ID"
+	ErrInvalidSessionId = "INVALID_SESSION_ID"
 )
 
 var upgrader = websocket.Upgrader{
 	CheckOrigin: func(r *http.Request) bool {
-		origin := r.Header.Get("Origin")
-		return origin == "http://localhost:3000" // Only allow our frontend origin
+		return true // Accept all origins since this is for local development only
 	},
 	ReadBufferSize:   32 * 1024,
 	WriteBufferSize:  32 * 1024,
@@ -53,12 +53,12 @@ type TerminalResponse struct {
 	Message   string `json:"message,omitempty"`
 }
 
-// HandleTerminalSession handles both session creation and WebSocket connections
+// HandleTerminalSession handles terminal session creation and WebSocket connections
 func (h *Handler) HandleTerminalSession(w http.ResponseWriter, r *http.Request) {
-	// Set CORS headers
-	w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+	// Set permissive CORS headers for local development
+	w.Header().Set("Access-Control-Allow-Origin", r.Header.Get("Origin"))
 	w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+	w.Header().Set("Access-Control-Allow-Headers", "*")
 	w.Header().Set("Access-Control-Allow-Credentials", "true")
 
 	// Handle preflight requests
@@ -67,129 +67,65 @@ func (h *Handler) HandleTerminalSession(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Handle WebSocket upgrade request
-	if websocket.IsWebSocketUpgrade(r) {
-		// Additional headers for WebSocket
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept, Sec-WebSocket-Accept, Sec-WebSocket-Key, Sec-WebSocket-Version, Sec-WebSocket-Protocol")
-
-		conn, err := upgrader.Upgrade(w, r, nil)
+	// Create new session if POST request
+	if r.Method == "POST" {
+		session, err := h.manager.NewSession()
 		if err != nil {
-			log.Printf("Failed to upgrade connection: %v", err)
-			h.sendError(w, ErrConnectionFailed, "Failed to establish WebSocket connection")
+			h.sendError(w, ErrConnectionFailed, err.Error())
 			return
 		}
 
-		// Get session ID from query params
-		sessionID := r.URL.Query().Get("sessionId")
-		if sessionID == "" {
-			conn.Close()
-			return
+		response := TerminalResponse{
+			SessionID: session.ID,
+			Message:   "Session created successfully",
 		}
 
-		session, exists := h.manager.GetSession(sessionID)
-		if !exists {
-			conn.Close()
-			h.sendError(w, ErrSessionNotFound, "Session not found")
-			return
-		}
-
-		// Generate unique client ID
-		clientID := uuid.New().String()
-
-		// Add client to session
-		session.AddClient(clientID, conn)
-		defer session.RemoveClient(clientID)
-
-		// Set up ping handler
-		conn.SetPingHandler(func(data string) error {
-			return conn.WriteControl(websocket.PongMessage, []byte(data), time.Now().Add(time.Second))
-		})
-
-		// Start ping ticker
-		go h.startPingTicker(conn, session.done)
-
-		// Handle incoming messages
-		for {
-			messageType, data, err := conn.ReadMessage()
-			if err != nil {
-				if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseNormalClosure) {
-					log.Printf("WebSocket error: %v", err)
-				}
-				return
-			}
-
-			if messageType != websocket.TextMessage {
-				continue
-			}
-
-			// Try to parse as a terminal message
-			var msg TerminalMessage
-			if err := json.Unmarshal(data, &msg); err == nil {
-				switch msg.Type {
-				case "resize":
-					if err := session.Resize(msg.Rows, msg.Cols); err != nil {
-						log.Printf("Failed to resize terminal: %v", err)
-					}
-					continue
-				case "input":
-					if err := session.Write([]byte(msg.Data)); err != nil {
-						log.Printf("Failed to write to PTY: %v", err)
-						return
-					}
-					continue
-				}
-			}
-
-			// If not a special message, treat as raw input
-			if err := session.Write(data); err != nil {
-				log.Printf("Failed to write to PTY: %v", err)
-				return
-			}
-		}
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(response)
 		return
 	}
 
-	// Handle session creation
-	if r.Method != http.MethodPost {
-		h.sendError(w, ErrInvalidOperation, "Method not allowed")
+	// Handle WebSocket connection
+	sessionID := r.URL.Query().Get("sessionId")
+	if sessionID == "" {
+		h.sendError(w, ErrMissingSessionId, "Session ID is required")
 		return
 	}
 
-	h.createSession(w, r)
-}
+	session, ok := h.manager.GetSession(sessionID)
+	if !ok || session == nil {
+		h.sendError(w, ErrSessionNotFound, "Session not found")
+		return
+	}
 
-// createSession creates a new terminal session
-func (h *Handler) createSession(w http.ResponseWriter, r *http.Request) {
-	session, err := h.manager.NewSession()
+	// Upgrade HTTP connection to WebSocket
+	conn, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
-		log.Printf("Failed to create terminal session: %v", err)
-		h.sendError(w, ErrConnectionFailed, "Failed to create terminal session")
+		log.Printf("Failed to upgrade connection: %v", err)
 		return
 	}
 
-	response := TerminalResponse{
-		SessionID: session.ID,
-		Message:   "Session created successfully",
-	}
+	// Add client to session
+	session.AddClient(sessionID, conn)
+	defer session.RemoveClient(sessionID)
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
-// startPingTicker sends periodic pings to keep the connection alive
-func (h *Handler) startPingTicker(conn *websocket.Conn, done chan struct{}) {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
+	// Handle WebSocket messages
 	for {
-		select {
-		case <-ticker.C:
-			if err := conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(time.Second)); err != nil {
-				log.Printf("Failed to send ping: %v", err)
-				return
+		var msg TerminalMessage
+		err := conn.ReadJSON(&msg)
+		if err != nil {
+			break
+		}
+
+		switch msg.Type {
+		case "input":
+			if _, err := session.PTY.Write([]byte(msg.Data)); err != nil {
+				log.Printf("Failed to write to PTY: %v", err)
 			}
-		case <-done:
-			return
+		case "resize":
+			if err := session.Resize(msg.Rows, msg.Cols); err != nil {
+				log.Printf("Failed to resize terminal: %v", err)
+			}
 		}
 	}
 }

@@ -19,15 +19,16 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	FileSystemService_ListDirectory_FullMethodName   = "/filesystem.FileSystemService/ListDirectory"
-	FileSystemService_WatchDirectory_FullMethodName  = "/filesystem.FileSystemService/WatchDirectory"
-	FileSystemService_ReadFile_FullMethodName        = "/filesystem.FileSystemService/ReadFile"
-	FileSystemService_WriteFile_FullMethodName       = "/filesystem.FileSystemService/WriteFile"
-	FileSystemService_DeleteFile_FullMethodName      = "/filesystem.FileSystemService/DeleteFile"
-	FileSystemService_MoveFile_FullMethodName        = "/filesystem.FileSystemService/MoveFile"
-	FileSystemService_CreateDirectory_FullMethodName = "/filesystem.FileSystemService/CreateDirectory"
-	FileSystemService_DeleteDirectory_FullMethodName = "/filesystem.FileSystemService/DeleteDirectory"
-	FileSystemService_SearchFiles_FullMethodName     = "/filesystem.FileSystemService/SearchFiles"
+	FileSystemService_ListDirectory_FullMethodName     = "/filesystem.FileSystemService/ListDirectory"
+	FileSystemService_WatchDirectory_FullMethodName    = "/filesystem.FileSystemService/WatchDirectory"
+	FileSystemService_ReadFile_FullMethodName          = "/filesystem.FileSystemService/ReadFile"
+	FileSystemService_WriteFile_FullMethodName         = "/filesystem.FileSystemService/WriteFile"
+	FileSystemService_DeleteFile_FullMethodName        = "/filesystem.FileSystemService/DeleteFile"
+	FileSystemService_MoveFile_FullMethodName          = "/filesystem.FileSystemService/MoveFile"
+	FileSystemService_CreateDirectory_FullMethodName   = "/filesystem.FileSystemService/CreateDirectory"
+	FileSystemService_DeleteDirectory_FullMethodName   = "/filesystem.FileSystemService/DeleteDirectory"
+	FileSystemService_RegisterDirectory_FullMethodName = "/filesystem.FileSystemService/RegisterDirectory"
+	FileSystemService_SearchFiles_FullMethodName       = "/filesystem.FileSystemService/SearchFiles"
 )
 
 // FileSystemServiceClient is the client API for FileSystemService service.
@@ -46,6 +47,7 @@ type FileSystemServiceClient interface {
 	// Directory operations
 	CreateDirectory(ctx context.Context, in *CreateDirectoryRequest, opts ...grpc.CallOption) (*CreateDirectoryResponse, error)
 	DeleteDirectory(ctx context.Context, in *DeleteDirectoryRequest, opts ...grpc.CallOption) (*DeleteDirectoryResponse, error)
+	RegisterDirectory(ctx context.Context, in *RegisterDirectoryRequest, opts ...grpc.CallOption) (*RegisterDirectoryResponse, error)
 	// Search operations
 	SearchFiles(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error)
 }
@@ -147,6 +149,16 @@ func (c *fileSystemServiceClient) DeleteDirectory(ctx context.Context, in *Delet
 	return out, nil
 }
 
+func (c *fileSystemServiceClient) RegisterDirectory(ctx context.Context, in *RegisterDirectoryRequest, opts ...grpc.CallOption) (*RegisterDirectoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(RegisterDirectoryResponse)
+	err := c.cc.Invoke(ctx, FileSystemService_RegisterDirectory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *fileSystemServiceClient) SearchFiles(ctx context.Context, in *SearchRequest, opts ...grpc.CallOption) (*SearchResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(SearchResponse)
@@ -173,6 +185,7 @@ type FileSystemServiceServer interface {
 	// Directory operations
 	CreateDirectory(context.Context, *CreateDirectoryRequest) (*CreateDirectoryResponse, error)
 	DeleteDirectory(context.Context, *DeleteDirectoryRequest) (*DeleteDirectoryResponse, error)
+	RegisterDirectory(context.Context, *RegisterDirectoryRequest) (*RegisterDirectoryResponse, error)
 	// Search operations
 	SearchFiles(context.Context, *SearchRequest) (*SearchResponse, error)
 	mustEmbedUnimplementedFileSystemServiceServer()
@@ -208,6 +221,9 @@ func (UnimplementedFileSystemServiceServer) CreateDirectory(context.Context, *Cr
 }
 func (UnimplementedFileSystemServiceServer) DeleteDirectory(context.Context, *DeleteDirectoryRequest) (*DeleteDirectoryResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method DeleteDirectory not implemented")
+}
+func (UnimplementedFileSystemServiceServer) RegisterDirectory(context.Context, *RegisterDirectoryRequest) (*RegisterDirectoryResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RegisterDirectory not implemented")
 }
 func (UnimplementedFileSystemServiceServer) SearchFiles(context.Context, *SearchRequest) (*SearchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SearchFiles not implemented")
@@ -370,6 +386,24 @@ func _FileSystemService_DeleteDirectory_Handler(srv interface{}, ctx context.Con
 	return interceptor(ctx, in, info, handler)
 }
 
+func _FileSystemService_RegisterDirectory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RegisterDirectoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(FileSystemServiceServer).RegisterDirectory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: FileSystemService_RegisterDirectory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(FileSystemServiceServer).RegisterDirectory(ctx, req.(*RegisterDirectoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _FileSystemService_SearchFiles_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(SearchRequest)
 	if err := dec(in); err != nil {
@@ -422,6 +456,10 @@ var FileSystemService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "DeleteDirectory",
 			Handler:    _FileSystemService_DeleteDirectory_Handler,
+		},
+		{
+			MethodName: "RegisterDirectory",
+			Handler:    _FileSystemService_RegisterDirectory_Handler,
 		},
 		{
 			MethodName: "SearchFiles",

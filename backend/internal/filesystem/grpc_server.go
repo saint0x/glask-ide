@@ -2,6 +2,7 @@ package filesystem
 
 import (
 	"context"
+	"fmt"
 	"os"
 
 	pb "glask-ide/internal/filesystem/proto"
@@ -20,8 +21,15 @@ func NewGRPCServer(service Service) pb.FileSystemServiceServer {
 }
 
 func (s *grpcServer) ListDirectory(ctx context.Context, req *pb.ListDirectoryRequest) (*pb.ListDirectoryResponse, error) {
+	fmt.Printf("[gRPC Server] ListDirectory called with path: %s, recursive: %v\n", req.Path, req.Recursive)
+
 	files, err := s.service.ListDirectory(req.Path, req.Recursive)
 	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("[gRPC Server] Directory not found: %s\n", req.Path)
+			return nil, status.Error(codes.NotFound, "directory not found")
+		}
+		fmt.Printf("[gRPC Server] Internal error: %v\n", err)
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
@@ -31,12 +39,13 @@ func (s *grpcServer) ListDirectory(ctx context.Context, req *pb.ListDirectoryReq
 			Path:    f.Path,
 			Name:    f.Name,
 			Size:    f.Size,
-			Mode:    f.Mode,
-			ModTime: f.ModTime.Unix(),
-			IsDir:   f.Mode == "directory",
+			Mode:    "-",
+			ModTime: f.ModTime,
+			IsDir:   f.IsDir,
 		}
 	}
 
+	fmt.Printf("[gRPC Server] Successfully listed directory %s, found %d files\n", req.Path, len(items))
 	return &pb.ListDirectoryResponse{Items: items}, nil
 }
 
@@ -51,6 +60,9 @@ func (s *grpcServer) WatchDirectory(req *pb.WatchDirectoryRequest, stream pb.Fil
 	}
 
 	if err := s.service.WatchPath(req.Path, callback); err != nil {
+		if os.IsNotExist(err) {
+			return status.Error(codes.NotFound, "directory not found")
+		}
 		return status.Error(codes.Internal, err.Error())
 	}
 	defer s.service.UnwatchPath(req.Path)
@@ -68,9 +80,9 @@ func (s *grpcServer) WatchDirectory(req *pb.WatchDirectoryRequest, stream pb.Fil
 					Path:    info.Path,
 					Name:    info.Name,
 					Size:    info.Size,
-					Mode:    info.Mode,
-					ModTime: info.ModTime.Unix(),
-					IsDir:   info.Mode == "directory",
+					Mode:    "-",
+					ModTime: info.ModTime,
+					IsDir:   info.IsDir,
 				},
 			}
 			if err := stream.Send(event); err != nil {
@@ -148,9 +160,12 @@ func (s *grpcServer) DeleteDirectory(ctx context.Context, req *pb.DeleteDirector
 
 func (s *grpcServer) SearchFiles(ctx context.Context, req *pb.SearchRequest) (*pb.SearchResponse, error) {
 	opts := SearchOptions{
-		Query:        req.Query,
-		FilePatterns: req.FilePatterns,
-		MaxResults:   int(req.MaxResults),
+		Query:         req.Query,
+		Path:          req.Path,
+		MaxResults:    int(req.MaxResults),
+		IncludeHidden: req.IncludeHidden,
+		FileTypes:     req.FileTypes,
+		FilePatterns:  req.FilePatterns,
 	}
 
 	files, err := s.service.SearchFiles(opts)
@@ -164,9 +179,9 @@ func (s *grpcServer) SearchFiles(ctx context.Context, req *pb.SearchRequest) (*p
 			Path:    f.Path,
 			Name:    f.Name,
 			Size:    f.Size,
-			Mode:    f.Mode,
-			ModTime: f.ModTime.Unix(),
-			IsDir:   f.Mode == "directory",
+			Mode:    "-",
+			ModTime: f.ModTime,
+			IsDir:   f.IsDir,
 		}
 	}
 
@@ -174,4 +189,9 @@ func (s *grpcServer) SearchFiles(ctx context.Context, req *pb.SearchRequest) (*p
 		Results:    results,
 		TotalCount: int32(len(results)),
 	}, nil
+}
+
+func (s *grpcServer) RegisterDirectory(ctx context.Context, req *pb.RegisterDirectoryRequest) (*pb.RegisterDirectoryResponse, error) {
+	s.service.RegisterDirectory(req.Name, req.AbsPath)
+	return &pb.RegisterDirectoryResponse{Success: true}, nil
 }

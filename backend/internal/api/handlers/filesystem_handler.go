@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -31,7 +32,10 @@ func NewFileSystemHandler(fsService pb.FileSystemServiceClient) *FileSystemHandl
 
 // HandleListDirectory handles directory listing requests
 func (h *FileSystemHandler) HandleListDirectory(w http.ResponseWriter, r *http.Request) {
+	fmt.Printf("[HTTP Handler] ListDirectory request received: %s\n", r.URL.String())
+
 	if r.Method != http.MethodGet {
+		fmt.Printf("[HTTP Handler] Invalid method: %s\n", r.Method)
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
@@ -44,18 +48,62 @@ func (h *FileSystemHandler) HandleListDirectory(w http.ResponseWriter, r *http.R
 	recursive := r.URL.Query().Get("recursive") == "true"
 	includeHidden := r.URL.Query().Get("includeHidden") == "true"
 
+	fmt.Printf("[HTTP Handler] Processing request - path: %s, recursive: %v, includeHidden: %v\n", path, recursive, includeHidden)
+
 	resp, err := h.fsService.ListDirectory(r.Context(), &pb.ListDirectoryRequest{
 		Path:          path,
 		Recursive:     recursive,
 		IncludeHidden: includeHidden,
 	})
 	if err != nil {
+		fmt.Printf("[HTTP Handler] Error from gRPC service: %v\n", err)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// Format response to match frontend expectations
+	response := struct {
+		Items []struct {
+			Path    string `json:"path"`
+			Name    string `json:"name"`
+			IsDir   bool   `json:"isDir"`
+			Size    int64  `json:"size"`
+			ModTime int64  `json:"modTime"`
+		} `json:"items"`
+	}{
+		Items: make([]struct {
+			Path    string `json:"path"`
+			Name    string `json:"name"`
+			IsDir   bool   `json:"isDir"`
+			Size    int64  `json:"size"`
+			ModTime int64  `json:"modTime"`
+		}, len(resp.Items)),
+	}
+
+	for i, item := range resp.Items {
+		response.Items[i] = struct {
+			Path    string `json:"path"`
+			Name    string `json:"name"`
+			IsDir   bool   `json:"isDir"`
+			Size    int64  `json:"size"`
+			ModTime int64  `json:"modTime"`
+		}{
+			Path:    item.Path,
+			Name:    item.Name,
+			IsDir:   item.IsDir,
+			Size:    item.Size,
+			ModTime: item.ModTime,
+		}
+	}
+
+	fmt.Printf("[HTTP Handler] Successfully processed request, returning %d items\n", len(response.Items))
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	if err := json.NewEncoder(w).Encode(response); err != nil {
+		fmt.Printf("[HTTP Handler] Error encoding response: %v\n", err)
+		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
+		return
+	}
 }
 
 // HandleWatchDirectory handles directory watching via WebSocket
@@ -295,4 +343,34 @@ func (h *FileSystemHandler) HandleSearchFiles(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
+}
+
+// HandleRegisterDirectory registers a directory with its absolute path
+func (h *FileSystemHandler) HandleRegisterDirectory(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req struct {
+		Name    string `json:"name"`
+		AbsPath string `json:"absPath"`
+	}
+
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Register the directory
+	_, err := h.fsService.RegisterDirectory(r.Context(), &pb.RegisterDirectoryRequest{
+		Name:    req.Name,
+		AbsPath: req.AbsPath,
+	})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }

@@ -1,6 +1,7 @@
 package filesystem
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -14,6 +15,8 @@ type service struct {
 	watcher    *fsnotify.Watcher
 	watchMutex sync.RWMutex
 	callbacks  map[string][]func(FileInfo)
+	dirPaths   map[string]string // Maps directory names to their absolute paths
+	pathMutex  sync.RWMutex
 }
 
 func NewService() (Service, error) {
@@ -25,6 +28,8 @@ func NewService() (Service, error) {
 	s := &service{
 		watcher:   watcher,
 		callbacks: make(map[string][]func(FileInfo)),
+		dirPaths:  make(map[string]string),
+		pathMutex: sync.RWMutex{},
 	}
 
 	// Start watching for filesystem events
@@ -33,74 +38,154 @@ func NewService() (Service, error) {
 	return s, nil
 }
 
-func (s *service) ListDirectory(path string, recursive bool) ([]FileInfo, error) {
-	var files []FileInfo
+// RegisterDirectory stores the absolute path for a directory
+func (s *service) RegisterDirectory(name, absPath string) {
+	s.pathMutex.Lock()
+	defer s.pathMutex.Unlock()
+	s.dirPaths[name] = absPath
+}
 
+func (s *service) resolvePath(path string) string {
+	s.pathMutex.RLock()
+	defer s.pathMutex.RUnlock()
+
+	// If it's already absolute, return it
+	if filepath.IsAbs(path) {
+		return path
+	}
+
+	// Check if we have a registered path
+	if absPath, ok := s.dirPaths[path]; ok {
+		return absPath
+	}
+
+	// If path is ".", use current directory
+	if path == "." {
+		pwd, _ := os.Getwd()
+		return pwd
+	}
+
+	// Default to joining with current directory
+	pwd, _ := os.Getwd()
+	return filepath.Join(pwd, path)
+}
+
+func (s *service) ListDirectory(path string, recursive bool) ([]FileInfo, error) {
+	fmt.Printf("ListDirectory called with path: %s, recursive: %v\n", path, recursive)
+
+	// Resolve the actual path
+	absPath := s.resolvePath(path)
+	fmt.Printf("Resolved path: %s\n", absPath)
+
+	// Check if path exists
+	fileInfo, err := os.Stat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, fmt.Errorf("path does not exist: %s", path)
+		}
+		return nil, fmt.Errorf("failed to access path: %v", err)
+	}
+
+	if !fileInfo.IsDir() {
+		return nil, fmt.Errorf("path is not a directory: %s", path)
+	}
+
+	var files []FileInfo
 	walkFn := func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
-			return err
+			fmt.Printf("Error walking path %s: %v\n", path, err)
+			return nil // Continue walking despite errors
 		}
 
-		// Skip hidden files and directories
+		// Skip hidden files/folders unless explicitly included
 		if strings.HasPrefix(info.Name(), ".") {
-			if info.IsDir() {
+			if info.IsDir() && !recursive {
 				return filepath.SkipDir
 			}
+			return nil
+		}
+
+		// Don't add the root directory itself
+		if path == absPath {
 			return nil
 		}
 
 		files = append(files, FileInfo{
 			Path:    path,
 			Name:    info.Name(),
+			IsDir:   info.IsDir(),
 			Size:    info.Size(),
-			Mode:    s.getModeString(info.Mode()),
-			ModTime: info.ModTime(),
+			ModTime: info.ModTime().Unix(),
 		})
 
-		if !recursive && info.IsDir() && path != "." {
+		if !recursive && info.IsDir() {
 			return filepath.SkipDir
 		}
 
 		return nil
 	}
 
-	if err := filepath.Walk(path, walkFn); err != nil {
-		return nil, err
+	if err := filepath.Walk(absPath, walkFn); err != nil {
+		return nil, fmt.Errorf("failed to walk directory: %v", err)
 	}
 
 	return files, nil
 }
 
+func (s *service) getAbsolutePath(path string) (string, error) {
+	// Path should already be absolute from metadata
+	return path, nil
+}
+
 func (s *service) ReadFile(path string) ([]byte, error) {
-	return os.ReadFile(path)
+	absPath, err := s.getAbsolutePath(path)
+	if err != nil {
+		return nil, err
+	}
+	return os.ReadFile(absPath)
 }
 
 func (s *service) WriteFile(path string, content []byte) error {
-	return os.WriteFile(path, content, 0644)
+	absPath, err := s.getAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+	return os.WriteFile(absPath, content, 0644)
 }
 
 func (s *service) DeleteFile(path string) error {
-	return os.Remove(path)
+	absPath, err := s.getAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+	return os.Remove(absPath)
 }
 
 func (s *service) CreateDirectory(path string) error {
-	return os.MkdirAll(path, 0755)
+	absPath, err := s.getAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+	return os.MkdirAll(absPath, 0755)
 }
 
 func (s *service) DeleteDirectory(path string) error {
-	return os.RemoveAll(path)
+	absPath, err := s.getAbsolutePath(path)
+	if err != nil {
+		return err
+	}
+	return os.RemoveAll(absPath)
 }
 
 func (s *service) WatchPath(path string, callback func(FileInfo)) error {
 	s.watchMutex.Lock()
 	defer s.watchMutex.Unlock()
 
-	if err := s.watcher.Add(path); err != nil {
-		return err
-	}
-
+	// Add callback
 	s.callbacks[path] = append(s.callbacks[path], callback)
-	return nil
+
+	// Start watching the path
+	return s.watcher.Add(path)
 }
 
 func (s *service) UnwatchPath(path string) error {
@@ -127,25 +212,23 @@ func (s *service) watchLoop() {
 			if !ok {
 				return
 			}
-			// TODO: Handle errors appropriately
-			println("watch error:", err.Error())
+			fmt.Printf("Error watching filesystem: %v\n", err)
 		}
 	}
 }
 
 func (s *service) handleFSEvent(event fsnotify.Event) {
-	s.watchMutex.RLock()
-	defer s.watchMutex.RUnlock()
-
 	// Get file info
 	info, err := os.Stat(event.Name)
 	if err != nil {
-		// File might have been deleted
 		if os.IsNotExist(err) && event.Op&fsnotify.Remove != 0 {
 			// Notify about deletion
 			fileInfo := FileInfo{
-				Path: event.Name,
-				Name: filepath.Base(event.Name),
+				Path:    event.Name,
+				Name:    filepath.Base(event.Name),
+				IsDir:   false,
+				Size:    0,
+				ModTime: 0,
 			}
 			s.notifyCallbacks(event.Name, fileInfo)
 		}
@@ -157,8 +240,8 @@ func (s *service) handleFSEvent(event fsnotify.Event) {
 		Path:    event.Name,
 		Name:    info.Name(),
 		Size:    info.Size(),
-		Mode:    s.getModeString(info.Mode()),
-		ModTime: info.ModTime(),
+		ModTime: info.ModTime().Unix(),
+		IsDir:   info.IsDir(),
 	}
 
 	// Notify callbacks
@@ -194,16 +277,31 @@ func (s *service) getModeString(mode os.FileMode) string {
 }
 
 func (s *service) MoveFile(oldPath, newPath string) error {
-	return os.Rename(oldPath, newPath)
+	absOldPath, err := s.getAbsolutePath(oldPath)
+	if err != nil {
+		return err
+	}
+	absNewPath, err := s.getAbsolutePath(newPath)
+	if err != nil {
+		return err
+	}
+	return os.Rename(absOldPath, absNewPath)
 }
 
 func (s *service) SearchFiles(opts SearchOptions) ([]FileInfo, error) {
-	// For the IDE's file explorer, we'll implement a basic file search
 	var results []FileInfo
-	
+
+	// Get absolute path for search
+	var searchPath string
+	if filepath.IsAbs(opts.Path) {
+		searchPath = opts.Path
+	} else {
+		searchPath = "/" + opts.Path
+	}
+
 	walkFn := func(path string, info fs.FileInfo, err error) error {
 		if err != nil {
-			return err
+			return nil
 		}
 
 		// Skip hidden files
@@ -214,42 +312,19 @@ func (s *service) SearchFiles(opts SearchOptions) ([]FileInfo, error) {
 			return nil
 		}
 
-		// Check if file matches any of the patterns
-		if len(opts.FilePatterns) > 0 {
-			matched := false
-			for _, pattern := range opts.FilePatterns {
-				if match, _ := filepath.Match(pattern, info.Name()); match {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				return nil
-			}
-		}
-
-		// Check if name matches query
-		if opts.Query != "" && !strings.Contains(strings.ToLower(info.Name()), strings.ToLower(opts.Query)) {
-			return nil
-		}
-
+		// Use the full path since we're not working relative to a workspace
 		results = append(results, FileInfo{
 			Path:    path,
 			Name:    info.Name(),
 			Size:    info.Size(),
-			Mode:    s.getModeString(info.Mode()),
-			ModTime: info.ModTime(),
+			ModTime: info.ModTime().Unix(),
+			IsDir:   info.IsDir(),
 		})
-
-		if len(results) >= opts.MaxResults && opts.MaxResults > 0 {
-			return filepath.SkipAll
-		}
 
 		return nil
 	}
 
-	err := filepath.Walk(".", walkFn)
-	if err != nil {
+	if err := filepath.Walk(searchPath, walkFn); err != nil {
 		return nil, err
 	}
 

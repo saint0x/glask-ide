@@ -95,6 +95,7 @@ func main() {
 	mux.HandleFunc("/api/fs/mkdir", loggingMiddleware(fsHandler.HandleCreateDirectory))
 	mux.HandleFunc("/api/fs/rmdir", loggingMiddleware(fsHandler.HandleDeleteDirectory))
 	mux.HandleFunc("/api/fs/search", loggingMiddleware(fsHandler.HandleSearchFiles))
+	mux.HandleFunc("/api/fs/register", loggingMiddleware(fsHandler.HandleRegisterDirectory))
 
 	// Terminal endpoint
 	mux.HandleFunc("/api/terminal/session", loggingMiddleware(termHandler.HandleTerminalSession))

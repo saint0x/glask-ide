@@ -19,6 +19,7 @@ service FileSystemService {
   // Directory operations
   rpc CreateDirectory(CreateDirectoryRequest) returns (CreateDirectoryResponse) {}
   rpc DeleteDirectory(DeleteDirectoryRequest) returns (DeleteDirectoryResponse) {}
+  rpc RegisterDirectory(RegisterDirectoryRequest) returns (RegisterDirectoryResponse) {}
   
   // Search operations
   rpc SearchFiles(SearchRequest) returns (SearchResponse) {}
@@ -115,12 +116,23 @@ message DeleteDirectoryResponse {
 
 message SearchRequest {
   string query = 1;
-  repeated string file_patterns = 2;
+  string path = 2;
   int32 max_results = 3;
-  string root_path = 4;
+  bool include_hidden = 4;
+  repeated string file_types = 5;
+  repeated string file_patterns = 6;
 }
 
 message SearchResponse {
   repeated FileInfo results = 1;
   int32 total_count = 2;
+}
+
+message RegisterDirectoryRequest {
+  string name = 1;
+  string abs_path = 2;
+}
+
+message RegisterDirectoryResponse {
+  bool success = 1;
 } 
