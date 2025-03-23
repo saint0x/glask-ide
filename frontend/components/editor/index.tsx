@@ -4,23 +4,23 @@ import type React from "react"
 
 import { useState, useEffect, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
-import { Highlight, themes, type Language } from "prism-react-renderer"
 import { readFile, writeFile } from "@/lib/api/filesystem"
 import debounce from "lodash/debounce"
+import { getLanguageFromPath, highlightCode, formatCode, getThemeStyles } from "@/lib/code-utils"
 
 interface EditorProps {
   className?: string
   filePath?: string
-  language?: Language
   readOnly?: boolean
   onChange?: (isModified: boolean) => void
 }
 
-export function Editor({ className, filePath, language = "tsx", readOnly = false, onChange }: EditorProps) {
+export function Editor({ className, filePath, readOnly = false, onChange }: EditorProps) {
   const [code, setCode] = useState<string>("")
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [isDirty, setIsDirty] = useState(false)
+  const [language, setLanguage] = useState<string>("plaintext")
   const textareaRef = useRef<HTMLTextAreaElement>(null)
   const lastSavedCode = useRef<string>("")
   const mountedRef = useRef(false)
@@ -38,8 +38,12 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
       setError(null)
       setIsDirty(false)
       lastSavedCode.current = ""
+      setLanguage("plaintext")
       return
     }
+
+    // Set language based on file extension
+    setLanguage(getLanguageFromPath(filePath))
 
     const loadFile = async () => {
       try {
@@ -60,6 +64,19 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
 
     loadFile()
   }, [filePath])
+
+  // Format code on demand (Shift + Alt + F)
+  const handleFormat = useCallback(async () => {
+    if (!code || !language) return
+    try {
+      const formatted = await formatCode(code, language)
+      setCode(formatted)
+      setIsDirty(true)
+      onChange?.(true)
+    } catch (err) {
+      console.error("Error formatting code:", err)
+    }
+  }, [code, language, onChange])
 
   // Debounced save function
   const debouncedSave = useCallback(
@@ -111,8 +128,12 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
       if (isDirty) {
         debouncedSave.flush()
       }
+    } else if (e.key === "f" && e.shiftKey && e.altKey) {
+      // Handle format
+      e.preventDefault()
+      handleFormat()
     }
-  }, [code, debouncedSave, isDirty])
+  }, [code, debouncedSave, isDirty, handleFormat])
 
   // Cleanup effect
   useEffect(() => {
@@ -124,6 +145,33 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
       debouncedSave.cancel()
     }
   }, [debouncedSave, isDirty])
+
+  // Add syntax highlighting styles
+  useEffect(() => {
+    const styleId = 'editor-syntax-styles'
+    let styleEl = document.getElementById(styleId)
+    
+    if (!styleEl) {
+      styleEl = document.createElement('style')
+      styleEl.id = styleId
+      document.head.appendChild(styleEl)
+    }
+    
+    // Add base theme styles
+    const themeStyles = getThemeStyles(true) // Use dark theme
+    styleEl.textContent = `
+      .editor-content {
+        color: #d4d4d4;
+        background: transparent;
+      }
+      .editor-content pre {
+        margin: 0;
+        padding: 0;
+        background: transparent;
+      }
+      ${themeStyles}
+    `
+  }, [])
 
   if (isLoading) {
     return (
@@ -142,6 +190,8 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
     )
   }
 
+  const highlightedCode = highlightCode(code, language)
+
   return (
     <div 
       className={cn("relative h-full w-full font-mono", className)}
@@ -151,48 +201,26 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
         WebkitBackdropFilter: "blur(10px)",
       }}
     >
-      <Highlight 
-        theme={themes.nightOwl} 
-        code={code} 
-        language={language}
-      >
-        {({ className: highlightClassName, style, tokens, getLineProps, getTokenProps }) => (
-          <>
-            <pre
-              className={cn(
-                "absolute h-full w-full overflow-auto rounded-lg bg-transparent p-4 text-sm",
-                highlightClassName
-              )}
-              style={style}
-            >
-              {tokens.map((line, i) => (
-                <div key={i} {...getLineProps({ line })}>
-                  {line.map((token, key) => (
-                    <span key={key} {...getTokenProps({ token })} />
-                  ))}
-                </div>
-              ))}
-            </pre>
-            <textarea
-              ref={textareaRef}
-              value={code}
-              onChange={handleCodeChange}
-              onKeyDown={handleKeyDown}
-              spellCheck={false}
-              className={cn(
-                "absolute h-full w-full resize-none overflow-auto rounded-lg bg-transparent p-4 text-sm text-transparent caret-white outline-none",
-                "selection:bg-[#163b59]"
-              )}
-              style={{
-                WebkitTextFillColor: "transparent",
-                fontFamily: "inherit",
-                caretColor: "#fff",
-              }}
-              readOnly={readOnly}
-            />
-          </>
+      <div className="editor-content absolute h-full w-full overflow-auto rounded-lg bg-transparent p-4 text-sm">
+        <pre dangerouslySetInnerHTML={{ __html: highlightedCode }} />
+      </div>
+      <textarea
+        ref={textareaRef}
+        value={code}
+        onChange={handleCodeChange}
+        onKeyDown={handleKeyDown}
+        spellCheck={false}
+        className={cn(
+          "absolute h-full w-full resize-none overflow-auto rounded-lg bg-transparent p-4 text-sm text-transparent caret-white outline-none",
+          "selection:bg-[#163b59]"
         )}
-      </Highlight>
+        style={{
+          WebkitTextFillColor: "transparent",
+          fontFamily: "inherit",
+          caretColor: "#fff",
+        }}
+        readOnly={readOnly}
+      />
     </div>
   )
 }
