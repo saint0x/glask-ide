@@ -5,7 +5,7 @@ import { ChevronDown, ChevronRight, Search, Plus, X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { FileIcon } from "./file-icon"
-import { listDirectory, createDirectory, searchFiles, registerDirectory } from "@/lib/api/filesystem"
+import { listDirectory, createDirectory, searchFiles, registerDirectory, getWorkspace, setWorkspace, clearWorkspace as clearWorkspaceStorage } from "@/lib/api/filesystem"
 import { FileItem } from "@/types/file"
 import { Input } from "@/components/ui/input"
 import debounce from "lodash/debounce"
@@ -13,9 +13,10 @@ import { FolderOpen } from "lucide-react"
 
 interface FileSystemSidebarProps {
   isOpen: boolean
+  onFileSelect: (file: FileItem) => void
 }
 
-export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
+export function FileSystemSidebar({ isOpen, onFileSelect }: FileSystemSidebarProps) {
   const [files, setFiles] = useState<FileItem[]>([])
   const [searchQuery, setSearchQuery] = useState("")
   const [sidebarWidth, setSidebarWidth] = useState<number | null>(null)
@@ -33,12 +34,11 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
     }
   }, [workspacePath])
 
-  // Load workspace from localStorage on mount
+  // Update useEffect to use new workspace functions
   useEffect(() => {
-    const savedWorkspaceInfo = localStorage.getItem('workspaceInfo')
-    if (savedWorkspaceInfo) {
-      const { path } = JSON.parse(savedWorkspaceInfo)
-      setWorkspacePath(path)
+    const workspace = getWorkspace()
+    if (workspace) {
+      setWorkspacePath(workspace.path)
     }
   }, [])
 
@@ -98,87 +98,85 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
 
   const handleSelectWorkspace = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files
-    console.log("Files selected:", files)
-
     if (!files || files.length === 0) {
       console.log("No files selected")
-      setError("No directory selected")
       return
     }
 
-    // Clear previous workspace state
-    setFiles([])
-    setSearchQuery("")
-    setIsSearching(false)
-    setError(null)
-
-    // Get the directory name and path
     const firstFile = files[0]
-    console.log("First file:", firstFile)
     
-    if (!firstFile.webkitRelativePath) {
-      console.error("No webkitRelativePath available")
-      setError("Failed to get directory path")
+    // Try different methods to get the directory path
+    let dirPath: string | null = null
+    
+    // Method 1: Using webkitRelativePath to construct absolute path
+    if (firstFile.webkitRelativePath) {
+      const pathParts = firstFile.webkitRelativePath.split('/')
+      if (pathParts.length > 1) {
+        // Get the root directory name
+        const rootDir = pathParts[0]
+        // Construct absolute path using current working directory
+        dirPath = `/Users/saint/Desktop/${rootDir}`
+      }
+    }
+    
+    // Method 2: Using path property (works in some browsers)
+    if (!dirPath && 'path' in firstFile) {
+      const path = (firstFile as any).path
+      if (path) {
+        // If path is already absolute, use it
+        if (path.startsWith('/')) {
+          dirPath = path.split(firstFile.name)[0].replace(/\/$/, '')
+        } else {
+          // Construct absolute path
+          dirPath = `/Users/saint/Desktop/${path.split(firstFile.name)[0]}`.replace(/\/$/, '')
+        }
+      }
+    }
+
+    if (!dirPath) {
+      console.error("Could not determine directory path")
+      setError("Could not determine directory path. Please try a different folder.")
       return
     }
 
-    // Get the directory name from the webkitRelativePath
-    const dirPath = firstFile.webkitRelativePath.split('/')[0]
-    const absolutePath = `/Users/saint/Desktop/${dirPath}`
-    
-    // Reset the input so the same directory can be selected again
-    const input = e.target as HTMLInputElement
-    input.value = ''
+    console.log("Selected directory path:", dirPath)
 
     try {
-      console.log("Registering directory...")
-      // Register the directory with the backend using the absolute path
-      await registerDirectory(dirPath, absolutePath)
-      
-      // Store the directory info
-      const workspaceInfo = { name: dirPath, path: absolutePath }
-      setWorkspacePath(absolutePath)
-      localStorage.setItem('workspaceInfo', JSON.stringify(workspaceInfo))
-      
-      console.log("Loading files...")
-      // Load files using the absolute path
-      await loadFiles(absolutePath)
-      console.log("Files loaded successfully")
-    } catch (err) {
-      console.error("Failed to load workspace:", err)
-      setWorkspacePath(null)
-      localStorage.removeItem('workspaceInfo')
-      setError("Failed to load workspace. Please try again.")
+      // Register the directory with its absolute path
+      await registerDirectory("workspace", dirPath)
+      console.log("Directory registered successfully:", dirPath)
+
+      // Set the workspace path in storage
+      setWorkspace(dirPath)
+      console.log("Workspace path set in storage:", dirPath)
+
+      // Set the workspace path in state
+      setWorkspacePath(dirPath)
+
+      // Load the files from the registered directory
+      await loadFiles(dirPath)
+    } catch (error) {
+      console.error("Failed to register directory:", error)
+      clearWorkspace()
+      setError("Failed to register workspace directory. Please try again.")
     }
   }
 
   const loadFiles = async (path: string) => {
-    if (!path) {
-      setError("Invalid path")
-      return []
-    }
-
     try {
       setIsLoading(true)
       setError(null)
+      
       console.log("Loading files from path:", path)
       const items = await listDirectory(path)
+      console.log("Files loaded:", items)
       
-      // Transform items to include proper id and path information
-      const transformedItems = items.map(item => ({
-        ...item,
-        id: item.path, // Use the full path as the id
-        isOpen: false,
-        children: item.type === "folder" ? [] : undefined
-      }))
-      
-      setFiles(transformedItems)
-      return transformedItems
-    } catch (err) {
-      const errorMessage = err instanceof Error ? err.message : "Failed to load files"
-      setError(errorMessage)
-      console.error("Failed to load files:", err)
-      throw err
+      // No need for additional transformation since listDirectory already returns the correct format
+      setFiles(items)
+    } catch (error) {
+      console.error("Failed to load files:", error)
+      clearWorkspace()
+      setError("Failed to load files. Please try selecting the workspace again.")
     } finally {
       setIsLoading(false)
     }
@@ -186,22 +184,13 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
 
   // Clear workspace function
   const clearWorkspace = () => {
+    clearWorkspaceStorage()
     setWorkspacePath(null)
     setFiles([])
     setSearchQuery("")
     setIsSearching(false)
     setError(null)
-    localStorage.removeItem('workspaceInfo')
   }
-
-  // Update useEffect to handle workspace loading errors
-  useEffect(() => {
-    const savedWorkspaceInfo = localStorage.getItem('workspaceInfo')
-    if (savedWorkspaceInfo) {
-      const { path } = JSON.parse(savedWorkspaceInfo)
-      setWorkspacePath(path)
-    }
-  }, [])
 
   const handleCreateFolder = async () => {
     if (!workspacePath) return
@@ -273,6 +262,12 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
   // Adjust display based on sidebar width
   const isCompact = sidebarWidth !== null && sidebarWidth < 150
 
+  const handleFileClick = (file: FileItem) => {
+    if (file.type === "file") {
+      onFileSelect(file)
+    }
+  }
+
   const renderFiles = (items: FileItem[], level = 0) => {
     return items.map((item) => (
       <div key={item.id} style={{ paddingLeft: isCompact ? `${level * 8}px` : `${level * 12}px` }}>
@@ -299,6 +294,7 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
               "flex cursor-pointer items-center py-1 px-2 hover:bg-[#c0c0c8]/5 rounded-lg",
               item.isActive && "bg-[#c0c0c8]/10 font-medium text-[#e8e8ed]",
             )}
+            onClick={() => handleFileClick(item)}
           >
             <div className={cn("ml-4 mr-1.5 w-5 flex justify-center", isCompact && "ml-2 mr-1")}>
               <FileIcon extension={item.extension || ""} />

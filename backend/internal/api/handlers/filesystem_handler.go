@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strconv"
 
@@ -353,24 +354,41 @@ func (h *FileSystemHandler) HandleRegisterDirectory(w http.ResponseWriter, r *ht
 	}
 
 	var req struct {
-		Name    string `json:"name"`
-		AbsPath string `json:"absPath"`
+		Name string `json:"name"`
+		Path string `json:"path"`
 	}
 
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
-	// Register the directory
-	_, err := h.fsService.RegisterDirectory(r.Context(), &pb.RegisterDirectoryRequest{
+	// Validate the path exists and is a directory
+	fileInfo, err := os.Stat(req.Path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "Directory does not exist", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "Failed to access directory", http.StatusInternalServerError)
+		return
+	}
+
+	if !fileInfo.IsDir() {
+		http.Error(w, "Path is not a directory", http.StatusBadRequest)
+		return
+	}
+
+	// Register the directory with the filesystem service
+	resp, err := h.fsService.RegisterDirectory(r.Context(), &pb.RegisterDirectoryRequest{
 		Name:    req.Name,
-		AbsPath: req.AbsPath,
+		AbsPath: req.Path,
 	})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(resp)
 }

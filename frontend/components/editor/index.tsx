@@ -2,325 +2,186 @@
 
 import type React from "react"
 
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useCallback } from "react"
 import { cn } from "@/lib/utils"
 import { Highlight, themes, type Language } from "prism-react-renderer"
+import { readFile, writeFile } from "@/lib/api/filesystem"
+import debounce from "lodash/debounce"
 
 interface EditorProps {
   className?: string
-  code?: string
+  filePath?: string
   language?: Language
   readOnly?: boolean
-  onChange?: (value: string) => void
+  onChange?: (isModified: boolean) => void
 }
 
-export function Editor({ className, code: initialCode, language = "tsx", readOnly = false, onChange }: EditorProps) {
-  const [code, setCode] = useState(
-    initialCode ||
-      `import { useState, useEffect } from "react";
-
-// Define the Vehicle type
-export interface VehicleType {
-  id: string;
-  make: string;
-  model: string;
-  year: number;
-  color: string;
-  vin: string;
-}
-
-interface AddVehicleFormProps {
-  onSubmit: (vehicle: Omit<VehicleType, "id">) => Promise<void>;
-  isLoading?: boolean;
-}
-
-export default function AddVehicleForm({ onSubmit, isLoading = false }: AddVehicleFormProps) {
-  const [make, setMake] = useState("");
-  const [model, setModel] = useState("");
-  const [year, setYear] = useState<number>(new Date().getFullYear());
-  const [color, setColor] = useState("");
-  const [vin, setVin] = useState("");
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setError(null);
-    
-    try {
-      await onSubmit({
-        make,
-        model,
-        year,
-        color,
-        vin
-      });
-      
-      // Reset form after successful submission
-      setMake("");
-      setModel("");
-      setYear(new Date().getFullYear());
-      setColor("");
-      setVin("");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'An unknown error occurred');
-    }
-  };
-
-  return (
-    <div className="vehicle-form">
-      <h2 className="text-xl font-bold mb-4">Add New Vehicle</h2>
-      
-      {error && (
-        <div className="error-message mb-4 p-3 bg-red-100 text-red-800 rounded">
-          {error}
-        </div>
-      )}
-      
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="form-group">
-          <label htmlFor="make" className="block mb-1">Make</label>
-          <input
-            id="make"
-            type="text"
-            value={make}
-            onChange={(e) => setMake(e.target.value)}
-            required
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <div className="form-group">
-          <label htmlFor="model" className="block mb-1">Model</label>
-          <input
-            id="model"
-            type="text"
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            required
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <div className="form-group">
-          <label htmlFor="year" className="block mb-1">Year</label>
-          <input
-            id="year"
-            type="number"
-            value={year}
-            onChange={(e) => setYear(parseInt(e.target.value))}
-            required
-            min={1900}
-            max={new Date().getFullYear() + 1}
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <div className="form-group">
-          <label htmlFor="color" className="block mb-1">Color</label>
-          <input
-            id="color"
-            type="text"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            required
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <div className="form-group">
-          <label htmlFor="vin" className="block mb-1">VIN</label>
-          <input
-            id="vin"
-            type="text"
-            value={vin}
-            onChange={(e) => setVin(e.target.value)}
-            required
-            pattern="[A-HJ-NPR-Z0-9]{17}"
-            title="Valid 17-character VIN (excluding I, O, Q)"
-            className="w-full p-2 border rounded"
-          />
-        </div>
-        
-        <button
-          type="submit"
-          disabled={isLoading}
-          className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-50"
-        >
-          {isLoading ? 'Adding...' : 'Add Vehicle'}
-        </button>
-      </form>
-    </div>
-  );
-}`,
-  )
-
-  const editorRef = useRef<HTMLDivElement>(null)
+export function Editor({ className, filePath, language = "tsx", readOnly = false, onChange }: EditorProps) {
+  const [code, setCode] = useState<string>("")
+  const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [isDirty, setIsDirty] = useState(false)
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const lastSavedCode = useRef<string>("")
+  const mountedRef = useRef(false)
 
-  // Handle code changes
-  const handleCodeChange = (newCode: string) => {
-    setCode(newCode)
-    if (onChange) {
-      onChange(newCode)
-    }
-  }
-
-  // Ensure proper text wrapping and boundary handling
+  // Load file contents when filePath changes
   useEffect(() => {
-    const handleResize = () => {
-      if (editorRef.current) {
-        // Ensure the editor respects the boundaries
-        editorRef.current.style.maxWidth = "100%"
+    // Skip initial mount to prevent double loading
+    if (!mountedRef.current) {
+      mountedRef.current = true
+      return
+    }
+
+    if (!filePath) {
+      setCode("")
+      setError(null)
+      setIsDirty(false)
+      lastSavedCode.current = ""
+      return
+    }
+
+    const loadFile = async () => {
+      try {
+        setIsLoading(true)
+        setError(null)
+        console.log("Loading file:", filePath) // Debug log
+        const content = await readFile(filePath)
+        setCode(content)
+        setIsDirty(false)
+        lastSavedCode.current = content
+      } catch (err) {
+        console.error("Error loading file:", err) // Debug log
+        setError(err instanceof Error ? err.message : "Failed to load file")
+      } finally {
+        setIsLoading(false)
       }
     }
 
-    // Initial setup
-    handleResize()
+    loadFile()
+  }, [filePath])
 
-    // Set up resize observer
-    const resizeObserver = new ResizeObserver(handleResize)
-    if (editorRef.current) {
-      resizeObserver.observe(editorRef.current)
-    }
+  // Debounced save function
+  const debouncedSave = useCallback(
+    debounce(async (content: string) => {
+      if (!filePath || !isDirty) return
 
-    // Clean up
-    return () => {
-      resizeObserver.disconnect()
-    }
-  }, [])
+      try {
+        console.log("Saving file:", filePath) // Debug log
+        await writeFile(filePath, content)
+        lastSavedCode.current = content
+        setIsDirty(false)
+        onChange?.(false)
+      } catch (err) {
+        console.error("Error saving file:", err) // Debug log
+        setError(err instanceof Error ? err.message : "Failed to save file")
+      }
+    }, 1000),
+    [filePath, isDirty, onChange]
+  )
 
-  // Custom theme based on glassmorphic aesthetic
-  const customTheme = {
-    ...themes.vsDark,
-    plain: {
-      color: "#e8e8ed",
-      backgroundColor: "transparent",
-    },
-    styles: [
-      ...themes.vsDark.styles,
-      {
-        types: ["keyword", "builtin", "operator"],
-        style: {
-          color: "#ff79c6",
-        },
-      },
-      {
-        types: ["string", "char", "tag", "selector"],
-        style: {
-          color: "#8be9fd",
-        },
-      },
-      {
-        types: ["function", "class-name"],
-        style: {
-          color: "#50fa7b",
-        },
-      },
-      {
-        types: ["comment"],
-        style: {
-          color: "#6272a4",
-          fontStyle: "italic",
-        },
-      },
-      {
-        types: ["constant", "number", "boolean"],
-        style: {
-          color: "#bd93f9",
-        },
-      },
-      {
-        types: ["attr-name", "property"],
-        style: {
-          color: "#ffb86c",
-        },
-      },
-      {
-        types: ["punctuation"],
-        style: {
-          color: "#a0a0a8",
-        },
-      },
-      {
-        types: ["variable"],
-        style: {
-          color: "#f8f8f2",
-        },
-      },
-    ],
-  }
+  // Handle code changes
+  const handleCodeChange = useCallback((newCode: string) => {
+    setCode(newCode)
+    const isModified = newCode !== lastSavedCode.current
+    setIsDirty(isModified)
+    onChange?.(isModified)
+    debouncedSave(newCode)
+  }, [debouncedSave, onChange])
 
-  // Handle tab key in textarea
-  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+  // Handle keyboard shortcuts
+  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Tab") {
       e.preventDefault()
-      const textarea = e.currentTarget
-      const start = textarea.selectionStart
-      const end = textarea.selectionEnd
-
-      // Insert tab at cursor position
-      const newValue = textarea.value.substring(0, start) + "  " + textarea.value.substring(end)
-      textarea.value = newValue
-
-      // Move cursor after the inserted tab
-      textarea.selectionStart = textarea.selectionEnd = start + 2
-
-      // Update state
-      handleCodeChange(newValue)
+      const start = e.currentTarget.selectionStart
+      const end = e.currentTarget.selectionEnd
+      const newCode = code.substring(0, start) + "  " + code.substring(end)
+      setCode(newCode)
+      // Set cursor position after tab
+      requestAnimationFrame(() => {
+        if (textareaRef.current) {
+          textareaRef.current.selectionStart = textareaRef.current.selectionEnd = start + 2
+        }
+      })
+    } else if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+      // Handle manual save
+      e.preventDefault()
+      debouncedSave.flush()
     }
+  }, [code, debouncedSave])
+
+  // Cleanup effect
+  useEffect(() => {
+    return () => {
+      debouncedSave.cancel()
+    }
+  }, [debouncedSave])
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#4d9cf6] border-t-transparent" />
+        <span className="ml-2 text-sm text-[#a0a0a8]">Loading...</span>
+      </div>
+    )
+  }
+
+  if (error) {
+    return (
+      <div className="flex items-center justify-center h-full">
+        <span className="text-sm text-red-500">{error}</span>
+      </div>
+    )
   }
 
   return (
-    <div
-      ref={editorRef}
-      className={cn(
-        "h-full w-full overflow-auto bg-[rgba(20,20,26,0.7)] p-4 font-mono text-sm rounded-lg m-2 relative",
-        className,
-      )}
+    <div 
+      className={cn("relative h-full w-full font-mono", className)}
+      style={{
+        background: "rgba(26, 26, 32, 0.8)",
+        backdropFilter: "blur(10px)",
+        WebkitBackdropFilter: "blur(10px)",
+      }}
     >
-      {/* Hidden textarea for editing */}
-      <textarea
-        ref={textareaRef}
-        value={code}
-        onChange={(e) => handleCodeChange(e.target.value)}
-        onKeyDown={handleKeyDown}
-        className="absolute inset-0 h-full w-full resize-none overflow-hidden bg-transparent p-4 font-mono text-sm text-transparent caret-white outline-none z-10"
-        spellCheck="false"
-        autoCapitalize="off"
-        autoCorrect="off"
-        autoComplete="off"
-        data-gramm="false"
-        readOnly={readOnly}
-      />
-
-      {/* Syntax highlighted code display */}
-      <Highlight theme={customTheme} code={code} language={language}>
-        {({ className, style, tokens, getLineProps, getTokenProps }) => (
-          <pre
-            className="whitespace-pre-wrap break-words overflow-x-hidden pointer-events-none"
-            style={{ ...style, backgroundColor: "transparent" }}
-          >
-            {tokens.map((line, i) => {
-              // Extract the key from getLineProps and pass it directly
-              const lineProps = getLineProps({ line })
-              const { key: lineKey, ...restLineProps } = lineProps
-
-              return (
-                <div key={i} {...restLineProps} style={{ display: "flex" }}>
-                  <span className="text-[#6272a4] opacity-60 select-none mr-4 text-right w-8">{i + 1}</span>
-                  <span>
-                    {line.map((token, key) => {
-                      // Extract the key from getTokenProps and pass it directly
-                      const tokenProps = getTokenProps({ token })
-                      const { key: tokenKey, ...restTokenProps } = tokenProps
-
-                      return <span key={key} {...restTokenProps} />
-                    })}
-                  </span>
+      <Highlight 
+        theme={themes.nightOwl} 
+        code={code} 
+        language={language}
+      >
+        {({ className: highlightClassName, style, tokens, getLineProps, getTokenProps }) => (
+          <>
+            <pre
+              className={cn(
+                "absolute h-full w-full overflow-auto rounded-lg bg-transparent p-4 text-sm",
+                highlightClassName
+              )}
+              style={style}
+            >
+              {tokens.map((line, i) => (
+                <div key={i} {...getLineProps({ line })}>
+                  {line.map((token, key) => (
+                    <span key={key} {...getTokenProps({ token })} />
+                  ))}
                 </div>
-              )
-            })}
-          </pre>
+              ))}
+            </pre>
+            <textarea
+              ref={textareaRef}
+              value={code}
+              onChange={(e) => handleCodeChange(e.target.value)}
+              onKeyDown={handleKeyDown}
+              spellCheck={false}
+              className={cn(
+                "absolute h-full w-full resize-none overflow-auto rounded-lg bg-transparent p-4 text-sm text-transparent caret-white outline-none",
+                "selection:bg-[#163b59]"
+              )}
+              style={{
+                WebkitTextFillColor: "transparent",
+                fontFamily: "inherit",
+              }}
+              readOnly={readOnly}
+            />
+          </>
         )}
       </Highlight>
     </div>

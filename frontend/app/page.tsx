@@ -6,6 +6,12 @@ import { Terminal } from "@/components/terminal"
 import { Editor } from "@/components/editor"
 import { FileTabs } from "@/components/editor/file-tabs"
 import { cn } from "@/lib/utils"
+import { FileItem } from "@/types/file"
+
+interface OpenFile extends FileItem {
+  isModified: boolean
+  isActive: boolean
+}
 
 export default function IDE() {
   const [fileSystemOpen, setFileSystemOpen] = useState(true)
@@ -13,6 +19,8 @@ export default function IDE() {
   const [terminalOpen, setTerminalOpen] = useState(true)
   const [terminalHeight, setTerminalHeight] = useState("var(--terminal-height)")
   const [mounted, setMounted] = useState(false)
+  const [openFiles, setOpenFiles] = useState<OpenFile[]>([])
+  const [selectedFile, setSelectedFile] = useState<OpenFile | null>(null)
 
   // Custom sidebar widths
   const [fileSystemWidth, setFileSystemWidth] = useState<number | null>(null)
@@ -153,6 +161,76 @@ export default function IDE() {
     }
   }, [fileSystemWidth, chatSidebarWidth])
 
+  // Handle file selection from sidebar
+  const handleFileSelect = useCallback((file: FileItem) => {
+    if (file.type === "folder") return
+
+    // Check if file is already open
+    const existingFile = openFiles.find(f => f.path === file.path)
+    if (existingFile) {
+      // If already open, just make it active
+      setOpenFiles(prev => prev.map(f => ({
+        ...f,
+        isActive: f.path === file.path
+      })))
+      setSelectedFile({ ...existingFile, isActive: true })
+      return
+    }
+
+    // Add new file to open files
+    const newFile: OpenFile = {
+      ...file,
+      isModified: false,
+      isActive: true
+    }
+
+    setOpenFiles(prev => [
+      ...prev.map(f => ({ ...f, isActive: false })),
+      newFile
+    ])
+    setSelectedFile(newFile)
+  }, [openFiles])
+
+  // Handle file tab selection
+  const handleTabSelect = useCallback((filePath: string) => {
+    setOpenFiles(prev => {
+      const newFiles = prev.map(f => ({
+        ...f,
+        isActive: f.path === filePath
+      }))
+      const selectedFile = newFiles.find(f => f.path === filePath)
+      if (selectedFile) {
+        setSelectedFile(selectedFile)
+      }
+      return newFiles
+    })
+  }, [])
+
+  // Handle file tab close
+  const handleTabClose = useCallback((filePath: string) => {
+    const fileToClose = openFiles.find(f => f.path === filePath)
+    if (!fileToClose) return
+
+    setOpenFiles(prev => {
+      const newFiles = prev.filter(f => f.path !== filePath)
+      // If we're closing the active file, make the last file active
+      if (fileToClose.isActive && newFiles.length > 0) {
+        newFiles[newFiles.length - 1].isActive = true
+        setSelectedFile(newFiles[newFiles.length - 1])
+      } else if (newFiles.length === 0) {
+        setSelectedFile(null)
+      }
+      return newFiles
+    })
+  }, [openFiles])
+
+  // Handle file content change
+  const handleFileChange = useCallback((filePath: string, isModified: boolean) => {
+    setOpenFiles(prev => prev.map(f => 
+      f.path === filePath ? { ...f, isModified } : f
+    ))
+  }, [])
+
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden">
       <Header
@@ -173,7 +251,7 @@ export default function IDE() {
           )}
           style={{ width: "var(--sidebar-width)" }}
         >
-          <FileSystemSidebar isOpen={fileSystemOpen} />
+          <FileSystemSidebar isOpen={fileSystemOpen} onFileSelect={handleFileSelect} />
         </div>
 
         {/* File System Resize Handle */}
@@ -221,11 +299,20 @@ export default function IDE() {
           }}
         >
           {/* File Tabs */}
-          <FileTabs />
+          <FileTabs 
+            files={openFiles}
+            onSelect={handleTabSelect}
+            onClose={handleTabClose}
+          />
 
           {/* Editor */}
           <div className="flex-1 overflow-hidden">
-            <Editor className="h-full" />
+            <Editor 
+              className="h-full" 
+              filePath={selectedFile?.path}
+              language={selectedFile?.extension as any || "plaintext"}
+              onChange={(isModified) => selectedFile && handleFileChange(selectedFile.path, isModified)}
+            />
           </div>
         </div>
       </div>
