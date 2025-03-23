@@ -45,13 +45,13 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
       try {
         setIsLoading(true)
         setError(null)
-        console.log("Loading file:", filePath) // Debug log
+        console.log("Loading file:", filePath)
         const content = await readFile(filePath)
         setCode(content)
         setIsDirty(false)
         lastSavedCode.current = content
       } catch (err) {
-        console.error("Error loading file:", err) // Debug log
+        console.error("Error loading file:", err)
         setError(err instanceof Error ? err.message : "Failed to load file")
       } finally {
         setIsLoading(false)
@@ -67,13 +67,14 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
       if (!filePath || !isDirty) return
 
       try {
-        console.log("Saving file:", filePath) // Debug log
+        console.log("Saving file:", filePath)
         await writeFile(filePath, content)
         lastSavedCode.current = content
         setIsDirty(false)
         onChange?.(false)
+        console.log("File saved successfully")
       } catch (err) {
-        console.error("Error saving file:", err) // Debug log
+        console.error("Error saving file:", err)
         setError(err instanceof Error ? err.message : "Failed to save file")
       }
     }, 1000),
@@ -81,7 +82,8 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
   )
 
   // Handle code changes
-  const handleCodeChange = useCallback((newCode: string) => {
+  const handleCodeChange = useCallback((e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const newCode = e.target.value
     setCode(newCode)
     const isModified = newCode !== lastSavedCode.current
     setIsDirty(isModified)
@@ -106,16 +108,22 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
     } else if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
       // Handle manual save
       e.preventDefault()
-      debouncedSave.flush()
+      if (isDirty) {
+        debouncedSave.flush()
+      }
     }
-  }, [code, debouncedSave])
+  }, [code, debouncedSave, isDirty])
 
   // Cleanup effect
   useEffect(() => {
     return () => {
+      // Save any pending changes before unmounting
+      if (isDirty) {
+        debouncedSave.flush()
+      }
       debouncedSave.cancel()
     }
-  }, [debouncedSave])
+  }, [debouncedSave, isDirty])
 
   if (isLoading) {
     return (
@@ -168,7 +176,7 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
             <textarea
               ref={textareaRef}
               value={code}
-              onChange={(e) => handleCodeChange(e.target.value)}
+              onChange={handleCodeChange}
               onKeyDown={handleKeyDown}
               spellCheck={false}
               className={cn(
@@ -178,6 +186,7 @@ export function Editor({ className, filePath, language = "tsx", readOnly = false
               style={{
                 WebkitTextFillColor: "transparent",
                 fontFamily: "inherit",
+                caretColor: "#fff",
               }}
               readOnly={readOnly}
             />

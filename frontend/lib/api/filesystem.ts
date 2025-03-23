@@ -213,26 +213,49 @@ export async function writeFile(path: string, content: string): Promise<void> {
   if (!path) throw new Error("Path is required")
   
   const normalizedPath = normalizePath(path)
-  const response = await fetch(`${API_BASE_URL}/api/fs/write`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ path: normalizedPath, content }),
-  })
+  console.log("Writing file:", normalizedPath)
   
-  if (!response.ok) {
-    throw new Error(`Failed to write file: ${response.statusText}`)
-  }
-  
-  // Update cache
-  const cacheKey = FILE_CACHE_PREFIX + normalizedPath
-  setCachedItem(cacheKey, content)
-  
-  // Invalidate directory cache for the parent directory
-  const parentDir = normalizedPath.substring(0, normalizedPath.lastIndexOf('/'))
-  if (parentDir) {
-    localStorage.removeItem(DIRECTORY_CACHE_PREFIX + parentDir)
+  try {
+    // Convert content to base64
+    const contentBuffer = new TextEncoder().encode(content)
+    const base64Content = btoa(String.fromCharCode(...contentBuffer))
+    
+    const response = await fetch(`${API_BASE_URL}/api/fs/write`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ 
+        path: normalizedPath, 
+        content: base64Content
+      }),
+    })
+    
+    if (!response.ok) {
+      const errorText = await response.text()
+      console.error("Failed to write file:", {
+        status: response.status,
+        statusText: response.statusText,
+        error: errorText,
+        path: normalizedPath
+      })
+      throw new Error(`Failed to write file: ${response.statusText}`)
+    }
+    
+    console.log("File written successfully:", normalizedPath)
+    
+    // Update cache
+    const cacheKey = FILE_CACHE_PREFIX + normalizedPath
+    setCachedItem(cacheKey, content)
+    
+    // Invalidate directory cache for the parent directory
+    const parentDir = normalizedPath.substring(0, normalizedPath.lastIndexOf('/'))
+    if (parentDir) {
+      localStorage.removeItem(DIRECTORY_CACHE_PREFIX + parentDir)
+    }
+  } catch (err) {
+    console.error("Error writing file:", err)
+    throw err
   }
 }
 
