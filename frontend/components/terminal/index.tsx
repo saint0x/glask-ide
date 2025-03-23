@@ -6,6 +6,8 @@ import { useState, useRef, useEffect, useCallback } from "react"
 import { X, Maximize2, Minimize2, TerminalIcon, Plus, ChevronDown, MoreHorizontal } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import ansiHTML from 'ansi-html'
+import { decode } from 'html-entities'
 
 interface TerminalProps {
   isOpen: boolean
@@ -36,9 +38,8 @@ interface TerminalPane {
   commandStatus: "success" | "error" | "pending" | "none"
   sessionId?: string
   socket?: WebSocket
+  lineCounter: number
   isConnecting?: boolean
-  retryCount?: number
-  lineCounter: number // Add counter for unique line IDs
 }
 
 // Sample terminal history
@@ -51,6 +52,54 @@ const initialTabs: TerminalTab[] = [
   { id: "ports", label: "Ports", isActive: false, priority: 1 },
   { id: "debug", label: "Debug Console", isActive: false, priority: 0 },
 ]
+
+// Initialize ansi-html
+ansiHTML.setColors({
+  reset: ['fff', '000'], // [FG, BG]
+  black: '000',
+  red: 'f66',
+  green: '2d2',
+  yellow: 'fd3',
+  blue: '36f',
+  magenta: 'f6f',
+  cyan: '3ff',
+  lightgrey: 'ccc',
+  darkgrey: '999',
+})
+
+// Update the processTerminalOutput function to better handle control sequences
+const processTerminalOutput = (text: string): string => {
+  // Remove common terminal control sequences that we don't want to display
+  let processed = text
+    // Remove terminal title sequences
+    .replace(/\x1B\][0-9;]*;?[a-zA-Z]/g, '')
+    // Remove cursor position sequences
+    .replace(/\x1B\[[0-9;]*[ABCDEFGJKST]/g, '')
+    // Remove clear screen sequences
+    .replace(/\x1B\[2J/g, '')
+    // Remove clear line sequences
+    .replace(/\x1B\[2K/g, '')
+    // Remove cursor save/restore sequences
+    .replace(/\x1B7|\x1B8/g, '')
+    // Remove terminal mode sequences
+    .replace(/\x1B\[\?[0-9;]*[hlm]/g, '')
+    // Remove other common control sequences
+    .replace(/\x1B\[[\x30-\x3F]*[\x20-\x2F]*[\x40-\x7E]/g, '')
+    // Remove other escape sequences
+    .replace(/\x1B[^[]/g, '')
+    // Remove bell character
+    .replace(/\x07/g, '')
+    // Remove null characters
+    .replace(/\x00/g, '')
+
+  // Convert remaining ANSI color sequences to HTML
+  processed = ansiHTML(processed)
+  
+  // Decode HTML entities
+  processed = decode(processed)
+  
+  return processed
+}
 
 export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true, chatOpen = true }: TerminalProps) {
   const [terminalLines, setTerminalLines] = useState<TerminalLine[]>(initialTerminalLines)
@@ -76,7 +125,8 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
       lines: [],
       command: "",
       commandStatus: "none",
-      lineCounter: 0, // Start with 0 since we have no initial lines
+      lineCounter: 0,
+      isConnecting: false
     },
   ])
 
@@ -205,9 +255,9 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     }
   }, [])
 
-  // Helper function to generate unique line ID
+  // Update the generateLineId function to ensure uniqueness
   const generateLineId = (paneId: string, counter: number) => {
-    return `${paneId}-${Date.now()}-${counter}`
+    return `${paneId}-${Date.now()}-${counter}-${Math.random().toString(36).substr(2, 9)}`
   }
 
   // Create a new terminal session with retry logic
@@ -215,173 +265,183 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     const paneIndex = terminalPanes.findIndex(pane => pane.id === paneId)
     if (paneIndex === -1) return
 
-    const pane = terminalPanes[paneIndex]
-    if (pane.isConnecting) return
+    // Set connecting state
+    setTerminalPanes(prevPanes => {
+      const newPanes = [...prevPanes]
+      const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+      if (paneIndex !== -1) {
+        newPanes[paneIndex] = {
+          ...newPanes[paneIndex],
+          isConnecting: true,
+          lines: [{
+            id: generateLineId(paneId, 1),
+            content: "Connecting to terminal...",
+            isCommand: false,
+            status: "pending"
+          }]
+        }
+      }
+      return newPanes
+    })
 
     console.log(`[Terminal ${paneId}] Creating new terminal session`)
 
-    try {
-      const response = await fetch('http://localhost:3001/api/terminal/create', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json'
+    // Retry logic
+    const maxRetries = 3
+    let retryCount = 0
+    let lastError = null
+
+    while (retryCount < maxRetries) {
+      try {
+        // Create new session
+        const response = await fetch('http://localhost:3001/api/terminal/session', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Accept': 'application/json'
+          },
+          credentials: 'include',
+          mode: 'cors'
+        })
+        
+        if (!response.ok) {
+          throw new Error(`Server responded with status: ${response.status}`)
         }
-      })
-      
-      if (!response.ok) {
-        throw new Error(`Failed to create terminal session: ${response.statusText}`)
-      }
 
-      const { sessionId } = await response.json()
-      console.log(`[Terminal ${paneId}] Session created with ID: ${sessionId}`)
-      const socket = new WebSocket(`ws://localhost:3001/api/terminal/connect?sessionId=${sessionId}`)
+        const data = await response.json()
+        if (!data.sessionId) {
+          throw new Error('Invalid response: missing sessionId')
+        }
 
-      socket.onopen = () => {
-        console.log(`[Terminal ${paneId}] WebSocket connection established`)
-        setTerminalPanes(prevPanes => {
-          const newPanes = [...prevPanes]
-          const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-          if (paneIndex !== -1) {
-            const counter = newPanes[paneIndex].lineCounter + 1
-            newPanes[paneIndex] = {
-              ...newPanes[paneIndex],
-              sessionId,
-              socket,
-              lineCounter: counter,
-              lines: [...newPanes[paneIndex].lines, {
-                id: generateLineId(paneId, counter),
-                content: 'Terminal connected',
-                isCommand: false,
-                status: "success"
-              }]
-            }
+        const sessionId = data.sessionId
+        console.log(`[Terminal ${paneId}] Session created with ID: ${sessionId}`)
+
+        // Create WebSocket connection
+        const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:'
+        const socket = new WebSocket(`${wsProtocol}//localhost:3001/api/terminal/session?sessionId=${sessionId}`)
+
+        // Set a connection timeout
+        const connectionTimeout = setTimeout(() => {
+          if (socket.readyState !== WebSocket.OPEN) {
+            socket.close()
+            throw new Error('WebSocket connection timeout')
           }
-          return newPanes
-        })
-      }
+        }, 5000)
 
-      socket.onmessage = (event) => {
-        console.log(`[Terminal ${paneId}] Received output:`, event.data)
-        setTerminalPanes(prevPanes => {
-          const newPanes = [...prevPanes]
-          const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-          if (paneIndex === -1) return prevPanes
-          
-          const counter = newPanes[paneIndex].lineCounter + 1
-          const pane = { ...newPanes[paneIndex], lineCounter: counter }
-          
-          // Check if this is the end of command output (usually contains a newline at the end)
-          const isCommandComplete = event.data.endsWith('\n') || event.data.endsWith('\r')
-          
-          // Update the last command's status to success when we get output
-          const updatedLines = [...pane.lines]
-          const lastCommandIndex = updatedLines.length - 1
-          if (lastCommandIndex >= 0 && updatedLines[lastCommandIndex].isCommand) {
-            console.log(`[Terminal ${paneId}] Command completed successfully:`, updatedLines[lastCommandIndex].content)
-            updatedLines[lastCommandIndex] = {
-              ...updatedLines[lastCommandIndex],
-              status: "success" // Blue for success
+        socket.onopen = () => {
+          clearTimeout(connectionTimeout)
+          console.log(`[Terminal ${paneId}] WebSocket connection established`)
+          setTerminalPanes(prevPanes => {
+            const newPanes = [...prevPanes]
+            const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+            if (paneIndex !== -1) {
+              newPanes[paneIndex] = {
+                ...newPanes[paneIndex],
+                sessionId,
+                socket,
+                isConnecting: false,
+                lines: [{
+                  id: generateLineId(paneId, 1),
+                  content: "Terminal connected",
+                  isCommand: false,
+                  status: "success"
+                }]
+              }
             }
-          }
-          
-          // Add the new output line
-          pane.lines = [
-            ...updatedLines,
-            {
-              id: generateLineId(paneId, counter),
-              content: event.data,
-              isCommand: false,
-              status: "none"
+            return newPanes
+          })
+        }
+
+        socket.onclose = () => {
+          console.log(`[Terminal ${paneId}] WebSocket connection closed`)
+          setTerminalPanes(prevPanes => {
+            const newPanes = [...prevPanes]
+            const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+            if (paneIndex !== -1) {
+              newPanes[paneIndex] = {
+                ...newPanes[paneIndex],
+                socket: undefined,
+                isConnecting: false,
+                lines: [
+                  ...newPanes[paneIndex].lines,
+                  {
+                    id: generateLineId(paneId, newPanes[paneIndex].lineCounter + 1),
+                    content: "Terminal disconnected",
+                    isCommand: false,
+                    status: "error"
+                  }
+                ]
+              }
             }
-          ]
-          
-          newPanes[paneIndex] = {
-            ...pane,
-            commandStatus: isCommandComplete ? "success" : "none" // Only set success if command is complete
-          }
-          return newPanes
-        })
-      }
+            return newPanes
+          })
+        }
 
-      socket.onclose = () => {
-        console.log(`[Terminal ${paneId}] Session ${sessionId} closed`)
-        // Try to reconnect if not intentionally closed
-        setTerminalPanes(prevPanes => {
-          const newPanes = [...prevPanes]
-          const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-          if (paneIndex !== -1) {
-            newPanes[paneIndex] = {
-              ...newPanes[paneIndex],
-              socket: undefined,
-              sessionId: undefined,
-              isConnecting: false,
-              lines: [...newPanes[paneIndex].lines, {
-                id: generateLineId(paneId, counter + 1),
-                content: 'Terminal disconnected. Attempting to reconnect...',
-                isCommand: false,
-                status: "error"
-              }],
-              lineCounter: counter + 1
+        socket.onerror = (error) => {
+          console.error(`[Terminal ${paneId}] WebSocket error:`, error)
+          setTerminalPanes(prevPanes => {
+            const newPanes = [...prevPanes]
+            const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+            if (paneIndex !== -1) {
+              newPanes[paneIndex] = {
+                ...newPanes[paneIndex],
+                isConnecting: false,
+                lines: [
+                  ...newPanes[paneIndex].lines,
+                  {
+                    id: generateLineId(paneId, newPanes[paneIndex].lineCounter + 1),
+                    content: "Connection error occurred",
+                    isCommand: false,
+                    status: "error"
+                  }
+                ]
+              }
             }
-          }
-          return newPanes
-        })
+            return newPanes
+          })
+        }
 
-        // Attempt to reconnect after a delay
-        setTimeout(() => {
-          createTerminalSession(paneId)
-        }, 2000)
-      }
-
-      socket.onerror = (error) => {
-        console.error(`[Terminal ${paneId}] WebSocket error:`, error)
-        setTerminalPanes(prevPanes => {
-          const newPanes = [...prevPanes]
-          const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-          if (paneIndex !== -1) {
-            newPanes[paneIndex] = {
-              ...newPanes[paneIndex],
-              isConnecting: false,
-              lines: [...newPanes[paneIndex].lines, {
-                id: generateLineId(paneId, counter + 1),
-                content: 'Failed to connect to terminal. Retrying...',
-                isCommand: false,
-                status: "error"
-              }],
-              lineCounter: counter + 1
-            }
-          }
-          return newPanes
-        })
-      }
-
-    } catch (error) {
-      console.error(`[Terminal ${paneId}] Failed to create session:`, error)
-      setTerminalPanes(prevPanes => {
-        const newPanes = [...prevPanes]
-        const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-        if (paneIndex !== -1) {
-          const counter = newPanes[paneIndex].lineCounter + 1
-          newPanes[paneIndex] = {
-            ...newPanes[paneIndex],
-            isConnecting: false,
-            lines: [...newPanes[paneIndex].lines, {
-              id: generateLineId(paneId, counter),
-              content: `Connection failed: ${error.message}. Retrying in 2s...`,
-              isCommand: false,
-              status: "error"
-            }],
-            lineCounter: counter
+        socket.onmessage = (event) => {
+          const data = event.data
+          if (typeof data === 'string') {
+            handleTerminalOutput(data, paneId)
           }
         }
-        return newPanes
-      })
 
-      // Retry connection after delay
-      setTimeout(() => {
-        createTerminalSession(paneId)
-      }, 2000)
+        return // Success - exit the retry loop
+      } catch (error) {
+        lastError = error
+        retryCount++
+        console.error(`[Terminal ${paneId}] Attempt ${retryCount} failed:`, error)
+        
+        if (retryCount < maxRetries) {
+          // Add exponential backoff
+          const delay = Math.min(1000 * Math.pow(2, retryCount - 1), 5000)
+          console.log(`[Terminal ${paneId}] Retrying in ${delay}ms...`)
+          await new Promise(resolve => setTimeout(resolve, delay))
+        }
+      }
     }
+
+    // If we get here, all retries failed
+    console.error(`[Terminal ${paneId}] All connection attempts failed:`, lastError)
+    setTerminalPanes(prevPanes => {
+      const newPanes = [...prevPanes]
+      const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+      if (paneIndex !== -1) {
+        newPanes[paneIndex] = {
+          ...newPanes[paneIndex],
+          isConnecting: false,
+          lines: [{
+            id: generateLineId(paneId, 1),
+            content: `Connection failed after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`,
+            isCommand: false,
+            status: "error"
+          }]
+        }
+      }
+      return newPanes
+    })
   }
 
   // Initialize terminal session when component mounts or when split
@@ -394,6 +454,8 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
   // Handle split terminal
   const handleSplitTerminal = () => {
     if (!isSplit) {
+      console.log("Creating new split terminal")
+      // First create the pane with connecting state
       setTerminalPanes(prev => [
         ...prev,
         {
@@ -401,11 +463,20 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
           lines: [],
           command: "",
           commandStatus: "none",
-          lineCounter: 0
+          lineCounter: 0,
+          isConnecting: true
         }
       ])
       setIsSplit(true)
+
+      // Then create the session and establish connection
       createTerminalSession('right')
+        .then(() => {
+          console.log("Split terminal session created and connected")
+        })
+        .catch(error => {
+          console.error("Failed to create split terminal:", error)
+        })
     }
   }
 
@@ -420,6 +491,83 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     }
   }, [])
 
+  // Add ResizeObserver to monitor terminal size changes
+  useEffect(() => {
+    const leftTerminal = leftTerminalRef.current
+    const rightTerminal = rightTerminalRef.current
+
+    if (!leftTerminal && !rightTerminal) return
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        const terminal = entry.target
+        const paneId = terminal === leftTerminal ? "left" : "right"
+        const pane = terminalPanes.find(p => p.id === paneId)
+        
+        if (pane?.socket && pane.socket.readyState === WebSocket.OPEN) {
+          // Calculate rows and columns based on character dimensions
+          // Assuming monospace font where each character is roughly 8x16 pixels
+          const charWidth = 8
+          const charHeight = 16
+          const cols = Math.floor(entry.contentRect.width / charWidth)
+          const rows = Math.floor(entry.contentRect.height / charHeight)
+
+          const resizeMessage = {
+            type: "resize",
+            rows: rows,
+            cols: cols
+          }
+          pane.socket.send(JSON.stringify(resizeMessage))
+        }
+      }
+    })
+
+    if (leftTerminal) {
+      resizeObserver.observe(leftTerminal)
+    }
+    if (rightTerminal) {
+      resizeObserver.observe(rightTerminal)
+    }
+
+    return () => {
+      resizeObserver.disconnect()
+    }
+  }, [terminalPanes])
+
+  // Update the handleTerminalOutput function to be simpler
+  const handleTerminalOutput = (data: string, paneId: string) => {
+    setTerminalPanes(prevPanes => {
+      const newPanes = [...prevPanes]
+      const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
+      if (paneIndex === -1) return prevPanes
+
+      const currentPane = newPanes[paneIndex]
+      
+      // Split into lines and filter out empty ones
+      const lines = data.split(/\r\n|\r|\n/).filter(line => line.length > 0)
+      
+      // Create new lines
+      const newLines = lines.map(line => ({
+        id: generateLineId(paneId, currentPane.lineCounter + 1),
+        content: line,
+        isCommand: false,
+        status: "none"
+      }))
+
+      if (newLines.length === 0) return newPanes
+
+      // Update the pane
+      newPanes[paneIndex] = {
+        ...currentPane,
+        lines: [...currentPane.lines, ...newLines],
+        lineCounter: currentPane.lineCounter + newLines.length
+      }
+
+      return newPanes
+    })
+  }
+
+  // Update the command submit handler to be simpler
   const handleCommandSubmit = (e: React.FormEvent, paneId: string) => {
     e.preventDefault()
 
@@ -430,23 +578,13 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     const commandText = pane.command.trim()
     if (!commandText) return
 
-    // Log command execution
-    console.log(`[Terminal ${paneId}] Executing command: ${commandText}`)
-
-    const counter = pane.lineCounter + 1
-    const newLines = [
-      ...pane.lines,
-      {
-        id: generateLineId(paneId, counter),
-        content: commandText,
-        isCommand: true,
-        status: "none" // Start with no status indicator
-      }
-    ]
+    if (pane.isConnecting) {
+      console.log(`[Terminal ${paneId}] Terminal is still connecting, please wait...`)
+      return
+    }
 
     // Special case for clear command
     if (commandText === "clear") {
-      console.log(`[Terminal ${paneId}] Clearing terminal`)
       const clearedPane = {
         ...pane,
         lines: [],
@@ -463,83 +601,53 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     // Send command to backend
     if (pane.socket && pane.socket.readyState === WebSocket.OPEN) {
       try {
-        console.log(`[Terminal ${paneId}] Sending command to WebSocket`)
-        pane.socket.send(commandText + '\n')
-        
+        // Add the command to the terminal output
+        const newLines = [
+          ...pane.lines,
+          {
+            id: generateLineId(paneId, pane.lineCounter + 1),
+            content: `saint@supercomputer $ ${commandText}`,
+            isCommand: true,
+            status: "none"
+          }
+        ]
+
         const newPane = {
           ...pane,
           lines: newLines,
           command: "",
           commandStatus: "none",
-          lineCounter: counter
+          lineCounter: pane.lineCounter + 1
         }
         
         const newPanes = [...terminalPanes]
         newPanes[paneIndex] = newPane
         setTerminalPanes(newPanes)
 
-        // Set a timeout to mark command as unsuccessful if no response
-        setTimeout(() => {
-          setTerminalPanes(prevPanes => {
-            const currentPanes = [...prevPanes]
-            const paneIndex = currentPanes.findIndex(p => p.id === paneId)
-            if (paneIndex === -1) return prevPanes
-
-            const lastLine = currentPanes[paneIndex].lines[currentPanes[paneIndex].lines.length - 1]
-            if (lastLine && lastLine.content === commandText && lastLine.status === "none") {
-              console.log(`[Terminal ${paneId}] Command timed out: ${commandText}`)
-              const updatedLines = [...currentPanes[paneIndex].lines]
-              updatedLines[updatedLines.length - 1] = {
-                ...lastLine,
-                status: "pending" // Yellow for unsuccessful
-              }
-              currentPanes[paneIndex] = {
-                ...currentPanes[paneIndex],
-                lines: updatedLines,
-                commandStatus: "pending"
-              }
-            }
-            return currentPanes
-          })
-        }, 1000) // Reduced timeout to 1 second for faster feedback
-
+        // Send the command to the backend
+        pane.socket.send(commandText + '\n')
       } catch (error) {
         console.error(`[Terminal ${paneId}] Failed to send command:`, error)
         const errorPane = {
           ...pane,
-          lines: [...newLines, {
-            id: generateLineId(paneId, counter + 1),
-            content: 'Failed to send command to terminal',
-            isCommand: false,
-            status: "error"
-          }],
+          lines: [
+            ...pane.lines,
+            {
+              id: generateLineId(paneId, pane.lineCounter + 1),
+              content: 'Failed to send command to terminal',
+              isCommand: false,
+              status: "error"
+            }
+          ],
           command: "",
-          commandStatus: "error" as const,
-          lineCounter: counter + 1
+          commandStatus: "error",
+          lineCounter: pane.lineCounter + 1
         }
         
         const newPanes = [...terminalPanes]
         newPanes[paneIndex] = errorPane
         setTerminalPanes(newPanes)
       }
-    } else {
-      console.error(`[Terminal ${paneId}] Terminal not connected`)
-      const errorPane = {
-        ...pane,
-        lines: [...newLines, {
-          id: generateLineId(paneId, counter + 1),
-          content: 'Terminal not connected',
-          isCommand: false,
-          status: "error"
-        }],
-        command: "",
-        commandStatus: "error" as const,
-        lineCounter: counter + 1
-      }
-      
-      const newPanes = [...terminalPanes]
-      newPanes[paneIndex] = errorPane
-      setTerminalPanes(newPanes)
     }
   }
 
@@ -589,6 +697,44 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
     }
 
     setTerminalPanes(updatedPanes)
+  }
+
+  // Update the command rendering
+  const renderCommandLine = (line: TerminalLine) => {
+    if (line.isCommand) {
+      return (
+        <div className="flex items-center">
+          <span className={cn("mr-1 text-xs", getStatusColor(line.status))}>●</span>
+          <span>{line.content}</span>
+        </div>
+      )
+    }
+    
+    return (
+      <div className="pl-6" style={{ whiteSpace: "pre" }}>
+        <span dangerouslySetInnerHTML={{ __html: processTerminalOutput(line.content) }} />
+      </div>
+    )
+  }
+
+  // Update the terminal input form to be simpler
+  const renderTerminalInput = (pane: TerminalPane, paneId: string) => {
+    return (
+      <form onSubmit={(e) => handleCommandSubmit(e, paneId)} className="flex items-center">
+        <span className={cn("mr-1 text-xs", getStatusColor(pane.commandStatus))}>●</span>
+        <span className="text-[#e8e8ed]">saint@supercomputer</span>
+        <span className="mx-1 text-[#a0a0a8]">$</span>
+        <input
+          ref={paneId === "left" ? leftInputRef : rightInputRef}
+          type="text"
+          value={pane.command}
+          onChange={(e) => handleCommandChange(e.target.value, paneId)}
+          className="flex-1 bg-transparent text-[#e8e8ed] focus:outline-none"
+          autoComplete="off"
+          spellCheck="false"
+        />
+      </form>
+    )
   }
 
   return (
@@ -723,21 +869,23 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
           style={{
             outline: activePane === "left" && isSplit ? "1px solid rgba(77, 156, 246, 0.3)" : "none",
             outlineOffset: "-1px",
+            fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+            WebkitFontSmoothing: "antialiased",
+            MozOsxFontSmoothing: "grayscale",
           }}
         >
           <div className="pb-1">
             {terminalPanes[0].lines.map((line) => (
-              <div key={line.id} className="mb-1 whitespace-pre-wrap">
-                {line.isCommand ? (
-                  <div className="flex items-center">
-                    <span className={cn("mr-1 text-xs", getStatusColor(line.status))}>●</span>
-                    <span className="text-[#e8e8ed]">saint@supercomputer</span>
-                    <span className="mx-1 text-[#a0a0a8]">$</span>
-                    <span>{line.content}</span>
-                  </div>
-                ) : (
-                  <div className="pl-6">{line.content}</div>
-                )}
+              <div 
+                key={line.id} 
+                className="mb-1"
+                style={{
+                  whiteSpace: "pre",
+                  wordWrap: "break-word",
+                  overflowWrap: "break-word"
+                }}
+              >
+                {renderCommandLine(line)}
               </div>
             ))}
           </div>
@@ -745,20 +893,7 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
           {/* Only show input form if there's no pending command */}
           {(!terminalPanes[0].lines.length || 
             terminalPanes[0].lines[terminalPanes[0].lines.length - 1].status !== "none") && (
-            <form onSubmit={(e) => handleCommandSubmit(e, "left")} className="flex items-center">
-              <span className={cn("mr-1 text-xs", getStatusColor(terminalPanes[0].commandStatus))}>●</span>
-              <span className="text-[#e8e8ed]">saint@supercomputer</span>
-              <span className="mx-1 text-[#a0a0a8]">$</span>
-              <input
-                ref={leftInputRef}
-                type="text"
-                value={terminalPanes[0].command}
-                onChange={(e) => handleCommandChange(e.target.value, "left")}
-                className="flex-1 bg-transparent text-[#e8e8ed] focus:outline-none"
-                autoComplete="off"
-                spellCheck="false"
-              />
-            </form>
+            renderTerminalInput(terminalPanes[0], "left")
           )}
         </div>
 
@@ -771,21 +906,23 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
             style={{
               outline: activePane === "right" ? "1px solid rgba(77, 156, 246, 0.3)" : "none",
               outlineOffset: "-1px",
+              fontFamily: "Menlo, Monaco, 'Courier New', monospace",
+              WebkitFontSmoothing: "antialiased",
+              MozOsxFontSmoothing: "grayscale",
             }}
           >
             <div className="pb-1">
               {terminalPanes[1].lines.map((line) => (
-                <div key={line.id} className="mb-1 whitespace-pre-wrap">
-                  {line.isCommand ? (
-                    <div className="flex items-center">
-                      <span className={cn("mr-1 text-xs", getStatusColor(line.status))}>●</span>
-                      <span className="text-[#e8e8ed]">saint@supercomputer</span>
-                      <span className="mx-1 text-[#a0a0a8]">$</span>
-                      <span>{line.content}</span>
-                    </div>
-                  ) : (
-                    <div className="pl-6">{line.content}</div>
-                  )}
+                <div 
+                  key={line.id} 
+                  className="mb-1"
+                  style={{
+                    whiteSpace: "pre",
+                    wordWrap: "break-word",
+                    overflowWrap: "break-word"
+                  }}
+                >
+                  {renderCommandLine(line)}
                 </div>
               ))}
             </div>
@@ -793,20 +930,7 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
             {/* Only show input form if there's no pending command */}
             {(!terminalPanes[1].lines.length || 
               terminalPanes[1].lines[terminalPanes[1].lines.length - 1].status !== "none") && (
-              <form onSubmit={(e) => handleCommandSubmit(e, "right")} className="flex items-center">
-                <span className={cn("mr-1 text-xs", getStatusColor(terminalPanes[1].commandStatus))}>●</span>
-                <span className="text-[#e8e8ed]">saint@supercomputer</span>
-                <span className="mx-1 text-[#a0a0a8]">$</span>
-                <input
-                  ref={rightInputRef}
-                  type="text"
-                  value={terminalPanes[1].command}
-                  onChange={(e) => handleCommandChange(e.target.value, "right")}
-                  className="flex-1 bg-transparent text-[#e8e8ed] focus:outline-none"
-                  autoComplete="off"
-                  spellCheck="false"
-                />
-              </form>
+              renderTerminalInput(terminalPanes[1], "right")
             )}
           </div>
         )}

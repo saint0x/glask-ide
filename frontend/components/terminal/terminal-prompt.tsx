@@ -31,10 +31,12 @@ export function TerminalPrompt({
   }
 
   return (
-    <div className="flex items-center">
+    <div className="flex items-center gap-2">
       <StatusIndicator status={status} className="mr-1" />
-      <span className="text-[#e8e8ed]">saint@supercomputer</span>
-      <span className="mx-1 text-[#a0a0a8]">$</span>
+      <div className="flex items-center gap-1">
+        <span className="text-[#e8e8ed]">saint@supercomputer</span>
+        <span className="text-[#a0a0a8]">$</span>
+      </div>
 
       {isInput ? (
         <form onSubmit={handleSubmit} className="flex-1">
@@ -43,13 +45,13 @@ export function TerminalPrompt({
             type="text"
             value={value}
             onChange={(e) => onChange && onChange(e.target.value)}
-            className="flex-1 w-full bg-transparent text-[#e8e8ed] focus:outline-none"
+            className="flex-1 w-full bg-transparent text-[#e8e8ed] focus:outline-none pl-2"
             autoComplete="off"
             spellCheck="false"
           />
         </form>
       ) : (
-        <span>{command}</span>
+        <span className="pl-2 text-[#e8e8ed]">{command}</span>
       )}
     </div>
   )

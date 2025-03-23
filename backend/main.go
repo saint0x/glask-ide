@@ -21,6 +21,30 @@ var frontendFiles embed.FS
 // Initialize logger with timestamp
 var logger = log.New(os.Stdout, "", log.Ldate|log.Ltime)
 
+// loggingMiddleware logs request details
+func loggingMiddleware(next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		// Set CORS headers for all responses
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:3000")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type, Accept")
+		w.Header().Set("Access-Control-Allow-Credentials", "true")
+
+		// Handle preflight requests
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+
+		start := time.Now()
+		logger.Printf("📡 %s Request: %s", r.Method, r.URL.Path)
+
+		next(w, r)
+
+		logger.Printf("✨ %s completed in %v", r.URL.Path, time.Since(start))
+	}
+}
+
 func main() {
 	logger.Printf("🚀 Starting Glask IDE backend server...")
 
@@ -58,25 +82,10 @@ func main() {
 	// Create HTTP handlers with gRPC client
 	fsHandler := handlers.NewFileSystemHandler(pb.NewFileSystemServiceClient(conn))
 
-	// Start the server
-	startServer(fsHandler, termHandler)
-}
-
-func startServer(fsHandler *handlers.FileSystemHandler, termHandler *terminal.Handler) {
 	// Create router
 	mux := http.NewServeMux()
 
-	// Add logging middleware
-	loggingMiddleware := func(next http.HandlerFunc) http.HandlerFunc {
-		return func(w http.ResponseWriter, r *http.Request) {
-			start := time.Now()
-			logger.Printf("📡 %s Request: %s", r.Method, r.URL.Path)
-			next(w, r)
-			logger.Printf("✨ %s completed in %v", r.URL.Path, time.Since(start))
-		}
-	}
-
-	// File system endpoints with logging
+	// File system endpoints
 	mux.HandleFunc("/api/fs/list", loggingMiddleware(fsHandler.HandleListDirectory))
 	mux.HandleFunc("/api/fs/watch", loggingMiddleware(fsHandler.HandleWatchDirectory))
 	mux.HandleFunc("/api/fs/read", loggingMiddleware(fsHandler.HandleReadFile))
@@ -87,9 +96,8 @@ func startServer(fsHandler *handlers.FileSystemHandler, termHandler *terminal.Ha
 	mux.HandleFunc("/api/fs/rmdir", loggingMiddleware(fsHandler.HandleDeleteDirectory))
 	mux.HandleFunc("/api/fs/search", loggingMiddleware(fsHandler.HandleSearchFiles))
 
-	// Terminal endpoints with logging
-	mux.HandleFunc("/api/terminal/create", loggingMiddleware(termHandler.CreateSession))
-	mux.HandleFunc("/api/terminal/connect", loggingMiddleware(termHandler.HandleTerminal))
+	// Terminal endpoint
+	mux.HandleFunc("/api/terminal/session", loggingMiddleware(termHandler.HandleTerminalSession))
 
 	// Serve static frontend files
 	mux.Handle("/", http.FileServer(http.FS(frontendFiles)))
