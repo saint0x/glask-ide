@@ -10,6 +10,9 @@ dist
 coverage
 *.lcov
 
+# deprecated
+BACKEND-DEPRECATED
+
 # logs
 logs
 _.log
