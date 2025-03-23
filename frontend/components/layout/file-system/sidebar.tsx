@@ -310,6 +310,11 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
     ))
   }
 
+  const getDirectoryName = (path: string | null) => {
+    if (!path) return null
+    return path.split('/').pop()
+  }
+
   return (
     <div
       ref={sidebarRef}
@@ -322,10 +327,12 @@ export function FileSystemSidebar({ isOpen }: FileSystemSidebarProps) {
       }}
     >
       <div className="flex h-full flex-col">
-        <div className="flex items-center justify-between p-3 border-b border-border">
-          <h2 className={cn("text-sm font-semibold text-[#e8e8ed]", isCompact && "truncate")}>
-            {isCompact ? "FILES" : isSearching ? "SEARCH RESULTS" : workspacePath || "NO WORKSPACE"}
-          </h2>
+        <div className="flex items-center p-3 border-b border-border">
+          <div className="flex-1 flex justify-center">
+            <h2 className={cn("text-sm font-semibold text-[#e8e8ed] px-2", isCompact && "truncate")}>
+              {isCompact ? "FILES" : isSearching ? "SEARCH RESULTS" : getDirectoryName(workspacePath) || "NO WORKSPACE"}
+            </h2>
+          </div>
           <div className="flex items-center gap-1">
             {workspacePath && (
               <Button
