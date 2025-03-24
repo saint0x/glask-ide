@@ -10,6 +10,7 @@ export interface FileTab {
 export interface FileItem {
   id: string
   name: string
+  path: string
   type: "file" | "folder"
   extension?: string
   children?: FileItem[]

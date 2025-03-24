@@ -112,7 +112,7 @@ const customTheme = {
       types: ["comment"],
       style: {
         color: "#6272a4",
-        fontStyle: "italic",
+        fontStyle: "italic" as const,
       },
     },
     {

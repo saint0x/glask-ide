@@ -1,4 +1,4 @@
-import { FileItem } from "@/types/file"
+import type { FileItem } from "@/types/file"
 
 const API_BASE_URL = "http://localhost:3001"
 const WORKSPACE_STORAGE_KEY = "glask:workspace"
@@ -136,11 +136,11 @@ export async function listDirectory(path: string): Promise<FileItem[]> {
     const data: FileSystemResponse = await response.json()
     console.log("Raw response data:", data)
     
-    const items = data.items.map(item => ({
+    const items: FileItem[] = data.items.map(item => ({
       id: item.path,
       name: item.name,
       path: item.path,
-      type: item.isDir ? "folder" : "file",
+      type: item.isDir ? "folder" as const : "file" as const,
       extension: !item.isDir ? item.name.split(".").pop() || "" : undefined,
       children: item.isDir ? [] : undefined,
       isOpen: false,

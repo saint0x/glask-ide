@@ -6,11 +6,12 @@ import { Terminal } from "@/components/terminal"
 import { Editor } from "@/components/editor"
 import { FileTabs } from "@/components/editor/file-tabs"
 import { cn } from "@/lib/utils"
-import { FileItem } from "@/types/file"
+import type { FileItem } from "@/types/file"
 
 interface OpenFile extends FileItem {
   isModified: boolean
   isActive: boolean
+  path: string
 }
 
 export default function IDE() {
@@ -180,6 +181,7 @@ export default function IDE() {
     // Add new file to open files
     const newFile: OpenFile = {
       ...file,
+      path: file.path || file.name, // Use name as fallback if path is not available
       isModified: false,
       isActive: true
     }
@@ -307,12 +309,13 @@ export default function IDE() {
 
           {/* Editor */}
           <div className="flex-1 overflow-hidden">
-            <Editor 
-              className="h-full" 
-              filePath={selectedFile?.path}
-              language={selectedFile?.extension as any || "plaintext"}
-              onChange={(isModified) => selectedFile && handleFileChange(selectedFile.path, isModified)}
-            />
+            {selectedFile && (
+              <Editor
+                className="h-full w-full"
+                filePath={selectedFile.path}
+                onChange={(isModified) => handleFileChange(selectedFile.path, isModified)}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -7,7 +7,7 @@ import { X } from "lucide-react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { FileIcon } from "./file-icon"
-import { FileItem } from "@/types/file"
+import type { FileItem } from "@/types/file"
 
 interface OpenFile extends FileItem {
   isModified: boolean

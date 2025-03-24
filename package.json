@@ -1,5 +1,6 @@
 {
   "dependencies": {
+    "": ".",
     "prettier": "^3.5.3",
     "prismjs": "^1.30.0"
   }

@@ -112,7 +112,7 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
   const rightInputRef = useRef<HTMLInputElement>(null)
   const [tabs, setTabs] = useState<TerminalTab[]>(initialTabs)
   const [visibleTabs, setVisibleTabs] = useState<TerminalTab[]>(initialTabs)
-  const [hiddenTabs, setHiddenTabs] = useState([])
+  const [hiddenTabs, setHiddenTabs] = useState<TerminalTab[]>([])
   const [showMoreMenu, setShowMoreMenu] = useState(false)
   const tabsContainerRef = useRef<HTMLDivElement>(null)
   const moreMenuRef = useRef<HTMLDivElement>(null)
@@ -434,7 +434,7 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
           isConnecting: false,
           lines: [{
             id: generateLineId(paneId, 1),
-            content: `Connection failed after ${maxRetries} attempts: ${lastError?.message || 'Unknown error'}`,
+            content: `Connection failed after ${maxRetries} attempts: ${lastError instanceof Error ? lastError.message : 'Unknown error'}`,
             isCommand: false,
             status: "error"
           }]
@@ -453,31 +453,24 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
 
   // Handle split terminal
   const handleSplitTerminal = () => {
-    if (!isSplit) {
-      console.log("Creating new split terminal")
-      // First create the pane with connecting state
-      setTerminalPanes(prev => [
-        ...prev,
-        {
-          id: "right",
-          lines: [],
-          command: "",
-          commandStatus: "none",
-          lineCounter: 0,
-          isConnecting: true
-        }
-      ])
-      setIsSplit(true)
-
-      // Then create the session and establish connection
-      createTerminalSession('right')
-        .then(() => {
-          console.log("Split terminal session created and connected")
-        })
-        .catch(error => {
-          console.error("Failed to create split terminal:", error)
-        })
+    if (isSplit) {
+      // Remove right pane
+      setTerminalPanes(prev => prev.filter(p => p.id !== "right"))
+      setActivePane("left")
+    } else {
+      // Add right pane
+      const newPane: TerminalPane = {
+        id: "right",
+        lines: [],
+        command: "",
+        commandStatus: "none",
+        lineCounter: 0,
+        isConnecting: false
+      }
+      setTerminalPanes(prev => [...prev, newPane])
+      setActivePane("right")
     }
+    setIsSplit(!isSplit)
   }
 
   // Clean up terminal sessions when component unmounts
@@ -536,118 +529,58 @@ export function Terminal({ isOpen, height, toggleTerminal, fileSystemOpen = true
 
   // Update the handleTerminalOutput function to be simpler
   const handleTerminalOutput = (data: string, paneId: string) => {
-    setTerminalPanes(prevPanes => {
-      const newPanes = [...prevPanes]
-      const paneIndex = newPanes.findIndex(pane => pane.id === paneId)
-      if (paneIndex === -1) return prevPanes
+    const processedContent = processTerminalOutput(data)
+    const newLine: TerminalLine = {
+      id: generateLineId(paneId, terminalPanes.find(p => p.id === paneId)?.lineCounter || 0),
+      content: processedContent,
+      isCommand: false,
+      status: "none"
+    }
 
-      const currentPane = newPanes[paneIndex]
-      
-      // Split into lines and filter out empty ones
-      const lines = data.split(/\r\n|\r|\n/).filter(line => line.length > 0)
-      
-      // Create new lines
-      const newLines = lines.map(line => ({
-        id: generateLineId(paneId, currentPane.lineCounter + 1),
-        content: line,
-        isCommand: false,
-        status: "none"
-      }))
-
-      if (newLines.length === 0) return newPanes
-
-      // Update the pane
-      newPanes[paneIndex] = {
-        ...currentPane,
-        lines: [...currentPane.lines, ...newLines],
-        lineCounter: currentPane.lineCounter + newLines.length
-      }
-
-      return newPanes
-    })
+    setTerminalPanes(prev => prev.map(pane => 
+      pane.id === paneId 
+        ? { 
+            ...pane, 
+            lines: [...pane.lines, newLine],
+            lineCounter: pane.lineCounter + 1
+          }
+        : pane
+    ))
   }
 
   // Update the command submit handler to be simpler
   const handleCommandSubmit = (e: React.FormEvent, paneId: string) => {
     e.preventDefault()
+    const pane = terminalPanes.find(p => p.id === paneId)
+    if (!pane) return
 
-    const paneIndex = terminalPanes.findIndex((pane) => pane.id === paneId)
-    if (paneIndex === -1) return
+    const command = pane.command.trim()
+    if (!command) return
 
-    const pane = terminalPanes[paneIndex]
-    const commandText = pane.command.trim()
-    if (!commandText) return
-
-    if (pane.isConnecting) {
-      console.log(`[Terminal ${paneId}] Terminal is still connecting, please wait...`)
-      return
+    // Add command to lines
+    const commandLine: TerminalLine = {
+      id: generateLineId(paneId, pane.lineCounter),
+      content: `$ ${command}`,
+      isCommand: true,
+      status: "pending"
     }
 
-    // Special case for clear command
-    if (commandText === "clear") {
-      const clearedPane = {
-        ...pane,
-        lines: [],
-        command: "",
-        commandStatus: "success" as const,
-        lineCounter: 0
-      }
-      const newPanes = [...terminalPanes]
-      newPanes[paneIndex] = clearedPane
-      setTerminalPanes(newPanes)
-      return
+    // Update pane with new command line
+    const updatedPane: TerminalPane = {
+      ...pane,
+      lines: [...pane.lines, commandLine],
+      command: "",
+      commandStatus: "pending",
+      lineCounter: pane.lineCounter + 1
     }
+
+    setTerminalPanes(prev => prev.map(p => 
+      p.id === paneId ? updatedPane : p
+    ))
 
     // Send command to backend
-    if (pane.socket && pane.socket.readyState === WebSocket.OPEN) {
-      try {
-        // Add the command to the terminal output
-        const newLines = [
-          ...pane.lines,
-          {
-            id: generateLineId(paneId, pane.lineCounter + 1),
-            content: `saint@supercomputer $ ${commandText}`,
-            isCommand: true,
-            status: "none"
-          }
-        ]
-
-        const newPane = {
-          ...pane,
-          lines: newLines,
-          command: "",
-          commandStatus: "none",
-          lineCounter: pane.lineCounter + 1
-        }
-        
-        const newPanes = [...terminalPanes]
-        newPanes[paneIndex] = newPane
-        setTerminalPanes(newPanes)
-
-        // Send the command to the backend
-        pane.socket.send(commandText + '\n')
-      } catch (error) {
-        console.error(`[Terminal ${paneId}] Failed to send command:`, error)
-        const errorPane = {
-          ...pane,
-          lines: [
-            ...pane.lines,
-            {
-              id: generateLineId(paneId, pane.lineCounter + 1),
-              content: 'Failed to send command to terminal',
-              isCommand: false,
-              status: "error"
-            }
-          ],
-          command: "",
-          commandStatus: "error",
-          lineCounter: pane.lineCounter + 1
-        }
-        
-        const newPanes = [...terminalPanes]
-        newPanes[paneIndex] = errorPane
-        setTerminalPanes(newPanes)
-      }
+    if (pane.socket?.readyState === WebSocket.OPEN) {
+      pane.socket.send(JSON.stringify({ type: "command", command }))
     }
   }
 

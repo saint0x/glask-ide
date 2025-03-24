@@ -88,11 +88,11 @@ const languageMap: Record<string, string> = {
 const prettierConfig = {
   semi: true,
   singleQuote: true,
-  trailingComma: 'es5',
+  trailingComma: 'es5' as const,
   printWidth: 100,
   tabWidth: 2,
-  endOfLine: 'lf',
-  embeddedLanguageFormatting: 'auto'
+  endOfLine: 'lf' as const,
+  embeddedLanguageFormatting: 'auto' as const
 }
 
 /**
@@ -134,8 +134,8 @@ export function highlightCode(code: string, language: string): string {
 export async function formatCode(code: string, language: string): Promise<string> {
   try {
     // Map language to parser
-    let parser: string
-    let options = { ...prettierConfig }
+    let parser: prettier.BuiltInParserName | undefined
+    let options: prettier.Options = { ...prettierConfig }
 
     switch (language) {
       case 'javascript':
@@ -145,7 +145,6 @@ export async function formatCode(code: string, language: string): Promise<string
       case 'typescript':
       case 'tsx':
         parser = 'typescript'
-        options.parser = 'typescript'
         break
       case 'css':
       case 'scss':
@@ -162,8 +161,7 @@ export async function formatCode(code: string, language: string): Promise<string
         parser = 'markdown'
         options = {
           ...options,
-          proseWrap: 'always',
-          parser: 'markdown'
+          proseWrap: 'always' as const,
         }
         break
       case 'yaml':
@@ -174,18 +172,22 @@ export async function formatCode(code: string, language: string): Promise<string
       case 'jsonc':
         options = {
           ...options,
-          parser: 'json',
-          trailingComma: 'none' // JSON doesn't support trailing commas
+          trailingComma: 'none' as const, // JSON doesn't support trailing commas
         }
+        parser = 'json'
         break
       default:
         return code // Return unformatted if no parser available
     }
 
+    if (!parser) {
+      return code
+    }
+
     // Format the code using Prettier's standalone API
     const formatted = await prettier.format(code, {
       ...options,
-      parser: parser,
+      parser,
     })
 
     return formatted
